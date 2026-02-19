@@ -246,15 +246,15 @@ class SerialManager @Inject constructor(
         binaryHeaderBuffer.reset()
         isCollectingBinaryHeader = false
 
-            isConnectedFlag.set(true)
-            isConnecting.set(false)
-            startReading()
-            startConsumer()
-            startFlushTimer()
+        isConnectedFlag.set(true)
+        isConnecting.set(false)
+        startReading()
+        startConsumer()
+        startFlushTimer()
 
-            _connectionState.value = ConnectionState.CONNECTED
-            true
-        } catch (e: Exception) {
+        _connectionState.value = ConnectionState.CONNECTED
+        true
+    } catch (e: Exception) {
             e.printStackTrace()
             _connectionState.value = ConnectionState.ERROR
             isConnecting.set(false)
