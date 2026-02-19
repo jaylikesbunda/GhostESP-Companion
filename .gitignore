@@ -1,0 +1,14 @@
+.gradle/
+build/
+app/build/
+.idea/
+*.iml
+local.properties
+.DS_Store
+/captures
+.externalNativeBuild
+.cxx
+nul
+.claude/settings.local.json
+/plans
+/reference firmware/Ghost_ESP

@@ -1,0 +1,184 @@
+name: Build GhostESP
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      buildType:
+        description: "Select the build type"
+        required: true
+        type: choice
+        options:
+          - "prerelease"
+          - "all"
+        default: "prerelease"
+      releaseVersion:
+        description: "Release tag (e.g. v1.0.0). leave empty to auto-generate"
+        required: false
+        type: string
+        default: ""
+      releaseName:
+        description: "Release name (e.g. 'Bug Fix Release'). leave empty for auto-generated"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+
+      - name: Run Lint
+        run: ./gradlew lint --no-daemon
+
+      - name: Upload Lint Results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: lint-results
+          path: app/build/reports/lint-results-*.html
+
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p release_assets
+          cp app/build/outputs/apk/debug/*.apk release_assets/ghostesp-companion-debug.apk
+          cp app/build/outputs/apk/release/*.apk release_assets/ghostesp-companion-release.apk
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghostesp-companion-debug
+          path: release_assets/ghostesp-companion-debug.apk
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghostesp-companion-release
+          path: release_assets/ghostesp-companion-release.apk
+
+  upload_prerelease:
+    name: Create Pre-release and Upload Artifacts
+    needs: build
+    if: github.event.inputs.buildType == 'prerelease'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_build_artifacts
+
+      - name: Verify and Prepare Artifacts for Upload
+        run: |
+          mkdir -p release_assets
+          find all_build_artifacts -name '*.apk' -exec cp {} release_assets/ \;
+          echo "Prepared release assets:"
+          ls -lh release_assets
+
+      - name: Generate Pre-release Tag and Title
+        id: pre_release_info
+        run: |
+          if [ -n "${{ github.event.inputs.releaseVersion }}" ]; then
+            TAG_NAME="${{ github.event.inputs.releaseVersion }}"
+          else
+            TAG_NAME="prerelease-$(date +'%Y%m%d-%H%M%S')-${GITHUB_SHA::7}"
+          fi
+          
+          if [ -n "${{ github.event.inputs.releaseName }}" ]; then
+            TITLE="${{ github.event.inputs.releaseName }}"
+          elif [ -n "${{ github.event.inputs.releaseVersion }}" ]; then
+            TITLE="Release $TAG_NAME"
+          else
+            TITLE="Pre-release $(date +'%Y-%m-%d %H:%M:%S')"
+          fi
+          
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_title=$TITLE" >> $GITHUB_OUTPUT
+          echo "Generated Tag: $TAG_NAME"
+          echo "Generated Title: $TITLE"
+
+      - name: Create GitHub Pre-Release and Upload Assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.pre_release_info.outputs.tag_name }}
+          TITLE: ${{ steps.pre_release_info.outputs.release_title }}
+        run: |
+          echo "Creating pre-release with tag $TAG and title '$TITLE'"
+          cat > release_notes.md <<EOF
+          Automated pre-release build for tag $TAG.
+
+          ## Installation
+          Download the APK and install on your Android device.
+
+          ## Artifacts
+          - \`ghostesp-companion-debug.apk\` - Debug build with logging
+          - \`ghostesp-companion-release.apk\` - Release build
+
+          EOF
+          if [ -z "$(ls -A release_assets/*.apk 2>/dev/null)" ]; then
+             echo "No APK files found in release_assets. Creating pre-release without assets."
+             gh release create "$TAG" \
+               --repo "$GITHUB_REPOSITORY" \
+               --title "$TITLE" \
+               --notes-file release_notes.md \
+               --prerelease
+          else
+             echo "Uploading assets from release_assets:"
+             ls -l release_assets/*.apk
+             gh release create "$TAG" \
+               --repo "$GITHUB_REPOSITORY" \
+               --title "$TITLE" \
+               --notes-file release_notes.md \
+               --prerelease \
+               release_assets/*.apk
+          fi
+          echo "Pre-release creation attempted."

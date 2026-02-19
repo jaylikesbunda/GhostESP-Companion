@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Common USB-Serial chips used in ESP32 dev boards -->
+    
+    <!-- FTDI FT232, FT2232, FT4232 -->
+    <usb-device vendor-id="1027" />
+    
+    <!-- Prolific PL2303 -->
+    <usb-device vendor-id="1659" />
+    
+    <!-- Silicon Labs CP210x -->
+    <usb-device vendor-id="4292" />
+    
+    <!-- CH340/CH341 -->
+    <usb-device vendor-id="6790" />
+    
+    <!-- CDC-ACM devices (includes some ESP32-S2/S3 in USB-CDC mode) -->
+    <usb-device class="2" />
+    
+    <!-- Espressif devices -->
+    <usb-device vendor-id="4292" product-id="60000" />
+</resources>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 
+        GhostESP Companion - Neo-Brutalist Dark Theme (Default)
+        Minimalist design with white/gray accents on deep black background
+        This is the primary/default theme for the app
+    -->
+    <style name="Theme.GhostESPCompanion" parent="android:Theme.Material.NoActionBar">
+        <!-- Primary colors - Clean White -->
+        <item name="android:colorPrimary">#FFFFFF</item>
+        <item name="android:colorPrimaryDark">#E0E0E0</item>
+        <item name="android:colorAccent">#FFFFFF</item>
+        
+        <!-- Status bar - Deep dark background -->
+        <item name="android:statusBarColor">#0A0A0A</item>
+        <item name="android:windowLightStatusBar">false</item>
+        
+        <!-- Navigation bar - Deep dark background -->
+        <item name="android:navigationBarColor">#0A0A0A</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        
+        <!-- Window background - Deep dark (neo-brutalist base) -->
+        <item name="android:windowBackground">#0A0A0A</item>
+    </style>
+</resources>

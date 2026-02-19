@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 
+        GhostESP Companion - Light Theme
+        Neo-Brutalist design with dark accents on light background
+    -->
+    <style name="Theme.GhostESPCompanion" parent="android:Theme.Material.NoActionBar">
+        <!-- Primary colors - Dark Gray for light mode -->
+        <item name="android:colorPrimary">#1A1A1A</item>
+        <item name="android:colorPrimaryDark">#0A0A0A</item>
+        <item name="android:colorAccent">#1A1A1A</item>
+        
+        <!-- Status bar - Light background with dark icons -->
+        <item name="android:statusBarColor">#FAFAFA</item>
+        <item name="android:windowLightStatusBar">true</item>
+        
+        <!-- Navigation bar - Light background with dark icons -->
+        <item name="android:navigationBarColor">#FAFAFA</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        
+        <!-- Window background - Off-white -->
+        <item name="android:windowBackground">#FAFAFA</item>
+    </style>
+</resources>
