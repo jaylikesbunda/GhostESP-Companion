@@ -2,9 +2,11 @@
 
 Android companion app for GhostESP devices.
 
+https://ghostesp.net/companion
+
 ## Requirements
 
-- Android 7.0+ (API 24)
+- Android 7.0+
 - Android Studio
 - JDK 17
 
@@ -20,7 +22,6 @@ Android companion app for GhostESP devices.
 - WiFi scanning and management
 - Bluetooth device interaction
 - Evil Portal functionality
-- NFC operations
 
 ## License
 
