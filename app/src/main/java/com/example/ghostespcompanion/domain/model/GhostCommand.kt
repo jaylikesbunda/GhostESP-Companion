@@ -11,7 +11,9 @@ package com.example.ghostespcompanion.domain.model
 sealed class GhostCommand {
     abstract val commandString: String
     abstract val timeoutMs: Long
-    
+    /** True if this command starts a new long-running operation and should be preceded by a Stop. */
+    open val requiresStopFirst: Boolean = false
+
     // ==================== Core Commands ====================
     
     /** Display help information */
@@ -52,6 +54,7 @@ sealed class GhostCommand {
         val live: Boolean = false,
         val stop: Boolean = false
     ) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = !stop
         override val commandString: String = when {
             stop -> "scanap -stop"
             live -> "scanap -live"
@@ -63,12 +66,14 @@ sealed class GhostCommand {
     
     /** Run WiFi station scan */
     data object ScanSta : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "scansta"
         override val timeoutMs: Long = 30000
     }
-    
+
     /** Run combined AP and STA scan */
     data class ScanAll(val duration: Int? = null) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = if (duration != null) "scanall $duration" else "scanall"
         override val timeoutMs: Long = (duration?.times(1000L) ?: 30000L) + 5000
     }
@@ -144,12 +149,14 @@ sealed class GhostCommand {
     
     /** Track AP RSSI */
     data object TrackAp : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "trackap"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
-    
+
     /** Track station RSSI */
     data object TrackSta : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "tracksta"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
@@ -158,24 +165,28 @@ sealed class GhostCommand {
     
     /** Run deauth attack */
     data class AttackDeauth(val targetIndex: String? = null) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "attack -d"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
-    
+
     /** Run EAPOL logoff attack */
     data class AttackEapol(val targetIndex: String? = null) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "attack -e"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
-    
+
     /** Run SAE flood attack */
     data class AttackSae(val password: String) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "attack -s $password"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
-    
+
     /** SAE flood with password */
     data class SaeFlood(val password: String) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "saeflood $password"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
@@ -200,6 +211,7 @@ sealed class GhostCommand {
     
     /** Start beacon spam - firmware supports: -r (random), -rr (rickroll), -l (AP list), or custom name */
     data class BeaconSpam(val mode: BeaconSpamMode = BeaconSpamMode.RANDOM) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = when (mode) {
             BeaconSpamMode.RANDOM -> "beaconspam -r"
             BeaconSpamMode.RICKROLL -> "beaconspam -rr"
@@ -242,6 +254,7 @@ sealed class GhostCommand {
     
     /** Start karma attack */
     data class KarmaStart(val ssids: List<String>? = null) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = if (ssids != null && ssids.isNotEmpty()) {
             "karma start ${ssids.joinToString(" ")}"
         } else {
@@ -264,6 +277,7 @@ sealed class GhostCommand {
         val ssid: String,
         val password: String? = null
     ) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = if (password != null) {
             "startportal $path \"$ssid\" \"$password\""
         } else {
@@ -302,6 +316,7 @@ sealed class GhostCommand {
         val mode: BleScanMode,
         val stop: Boolean = false
     ) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = !stop
         override val commandString: String = when {
             stop -> "blescan -s"
             mode == BleScanMode.FLIPPER -> "blescan -f"
@@ -326,6 +341,7 @@ sealed class GhostCommand {
     
     /** Start BLE spam - firmware: -apple, -ms, -samsung, -google, -random, -s (stop) */
     data class BleSpam(val mode: BleSpamMode? = null) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = mode != BleSpamMode.STOP
         override val commandString: String = when (mode) {
             null -> "blespam"
             BleSpamMode.APPLE -> "blespam -apple"
@@ -368,24 +384,28 @@ sealed class GhostCommand {
     
     /** Track GATT device - uses the device selected by selectgatt */
     data object TrackGatt : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "trackgatt"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
 
     /** Select Flipper by index and start tracking (selectflipper N triggers tracking immediately) */
     data class TrackFlipper(val index: Int) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "selectflipper $index"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
 
     /** Spoof AirTag */
     data class SpoofAirTag(val start: Boolean) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = start
         override val commandString: String = if (start) "spoofairtag" else "stopspoof"
         override val timeoutMs: Long = if (start) Long.MAX_VALUE else 5000
     }
-    
+
     /** BLE wardriving */
     data class BleWardrive(val stop: Boolean = false) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = !stop
         override val commandString: String = if (stop) "blewardriving -s" else "blewardriving"
         override val timeoutMs: Long = if (stop) 5000 else Long.MAX_VALUE
     }
@@ -394,16 +414,19 @@ sealed class GhostCommand {
     
     /** Chameleon Ultra commands - NFC card reading/writing and cloning */
     data class Chameleon(val subcommand: ChameleonSubcommand) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = subcommand.requiresStopFirst
         override val commandString: String = subcommand.commandString
         override val timeoutMs: Long = subcommand.timeoutMs
     }
-    
+
     sealed class ChameleonSubcommand {
         abstract val commandString: String
         abstract val timeoutMs: Long
-        
+        open val requiresStopFirst: Boolean = false
+
         /** Connect to Chameleon Ultra device */
         data class Connect(val timeout: Int = 30, val pin: Int? = null) : ChameleonSubcommand() {
+            override val requiresStopFirst: Boolean = true
             override val commandString: String = if (pin != null) {
                 "chameleon connect $timeout $pin"
             } else {
@@ -414,6 +437,7 @@ sealed class GhostCommand {
         
         /** Scan for NFC tag */
         data class Scan(val timeout: Int = 60) : ChameleonSubcommand() {
+            override val requiresStopFirst: Boolean = true
             override val commandString: String = "chameleon scan $timeout"
             override val timeoutMs: Long = (timeout * 1000L) + 5000
         }
@@ -457,14 +481,16 @@ sealed class GhostCommand {
     
     /** IR commands - firmware: list, send, learn, rx, dazzler, universals */
     data class Ir(val subcommand: IrSubcommand) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = subcommand.requiresStopFirst
         override val commandString: String = subcommand.commandString
         override val timeoutMs: Long = subcommand.timeoutMs
     }
-    
+
     sealed class IrSubcommand {
         abstract val commandString: String
         abstract val timeoutMs: Long
-        
+        open val requiresStopFirst: Boolean = false
+
         data class List(val path: String? = null) : IrSubcommand() {
             override val commandString: String = if (path != null) "ir list $path" else "ir list"
             override val timeoutMs: Long = 5000
@@ -476,28 +502,33 @@ sealed class GhostCommand {
         }
         
         data class Learn(val path: String? = null) : IrSubcommand() {
+            override val requiresStopFirst: Boolean = true
             override val commandString: String = if (path != null) "ir learn $path" else "ir learn"
             override val timeoutMs: Long = 15000
         }
-        
+
         data class Rx(val timeout: Int = 60) : IrSubcommand() {
+            override val requiresStopFirst: Boolean = true
             override val commandString: String = "ir rx $timeout"
             override val timeoutMs: Long = (timeout * 1000L) + 5000
         }
-        
+
         data class Dazzler(val stop: Boolean = false) : IrSubcommand() {
+            override val requiresStopFirst: Boolean get() = !stop
             override val commandString: String = if (stop) "ir dazzler stop" else "ir dazzler"
             override val timeoutMs: Long = if (stop) 5000 else Long.MAX_VALUE
         }
-        
+
         data class Universals(val subcommand: UniversalsSubcommand) : IrSubcommand() {
+            override val requiresStopFirst: Boolean get() = subcommand.requiresStopFirst
             override val commandString: String = subcommand.commandString
             override val timeoutMs: Long = subcommand.timeoutMs
         }
-        
+
         sealed class UniversalsSubcommand {
             abstract val commandString: String
             abstract val timeoutMs: Long
+            open val requiresStopFirst: Boolean = false
             
             data object List : UniversalsSubcommand() {
                 override val commandString: String = "ir universals list"
@@ -515,6 +546,7 @@ sealed class GhostCommand {
             }
             
             data class SendAll(val file: String, val buttonName: String, val delayMs: Int? = null) : UniversalsSubcommand() {
+                override val requiresStopFirst: Boolean = true
                 override val commandString: String = if (delayMs != null) {
                     "ir universals sendall $file $buttonName $delayMs"
                 } else {
@@ -547,6 +579,7 @@ sealed class GhostCommand {
     
     /** Run BadUSB script */
     data class BadUsbRun(val filename: String) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "badusb run $filename"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
@@ -561,12 +594,14 @@ sealed class GhostCommand {
     
     /** Get GPS info */
     data class GpsInfo(val stop: Boolean = false) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = !stop
         override val commandString: String = if (stop) "gpsinfo -s" else "gpsinfo"
         override val timeoutMs: Long = if (stop) 5000 else Long.MAX_VALUE
     }
-    
+
     /** Start wardriving */
     data class StartWardrive(val stop: Boolean = false) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = !stop
         override val commandString: String = if (stop) "startwd -s" else "startwd"
         override val timeoutMs: Long = if (stop) 5000 else Long.MAX_VALUE
     }
@@ -695,6 +730,7 @@ sealed class GhostCommand {
     
     /** Capture packets - firmware: -probe, -deauth, -beacon, -raw, -802154 */
     data class Capture(val mode: CaptureMode, val channel: Int? = null) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = buildString {
             append("capture ${mode.value}")
             channel?.let { append(" -c $it") }
@@ -715,22 +751,24 @@ sealed class GhostCommand {
     
     /** Start aerial scan */
     data class AerialScan(val duration: Int = 30, val stop: Boolean = false) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = !stop
         override val commandString: String = if (stop) "aerialstop" else "aerialscan $duration"
         override val timeoutMs: Long = if (stop) 5000 else (duration * 1000L) + 5000
     }
-    
+
     /** List aerial devices */
     data object AerialList : GhostCommand() {
         override val commandString: String = "aeriallist"
         override val timeoutMs: Long = 5000
     }
-    
+
     /** Track aerial device */
     data class AerialTrack(val indexOrMac: String) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "aerialtrack $indexOrMac"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
-    
+
     /** Spoof aerial device */
     data class AerialSpoof(
         val deviceId: String = "GHOST-TEST",
@@ -738,6 +776,7 @@ sealed class GhostCommand {
         val lon: Double = -122.4194,
         val alt: Float = 100.0f
     ) : GhostCommand() {
+        override val requiresStopFirst: Boolean = true
         override val commandString: String = "aerialspoof $deviceId $lat $lon $alt"
         override val timeoutMs: Long = Long.MAX_VALUE
     }
@@ -856,6 +895,7 @@ sealed class GhostCommand {
     
     /** DHCP starvation */
     data class DhcpStarve(val stop: Boolean = false) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = !stop
         override val commandString: String = if (stop) "dhcpstarve -s" else "dhcpstarve"
         override val timeoutMs: Long = if (stop) 5000 else Long.MAX_VALUE
     }
@@ -1120,12 +1160,14 @@ sealed class GhostCommand {
     
     /** Sweep channels */
     data class Sweep(val stop: Boolean = false) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = !stop
         override val commandString: String = if (stop) "sweep -s" else "sweep"
         override val timeoutMs: Long = if (stop) 5000 else Long.MAX_VALUE
     }
-    
+
     /** Listen probes */
     data class ListenProbes(val stop: Boolean = false) : GhostCommand() {
+        override val requiresStopFirst: Boolean get() = !stop
         override val commandString: String = if (stop) "listenprobes -s" else "listenprobes"
         override val timeoutMs: Long = if (stop) 5000 else Long.MAX_VALUE
     }

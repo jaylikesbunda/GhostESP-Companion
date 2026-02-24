@@ -279,9 +279,15 @@ class GhostRepository @Inject constructor(
     fun isConnected(): Boolean = serialManager.isConnected()
 
     /**
-     * Send a command
+     * Send a command.
+     * If the command starts a new long-running operation, a universal Stop is sent first
+     * to ensure the firmware is not busy before the new operation begins.
      */
     suspend fun sendCommand(command: GhostCommand): Boolean {
+        if (command.requiresStopFirst) {
+            serialManager.sendCommand(GhostCommand.Stop.commandString)
+            delay(200) // Allow firmware time to process the stop
+        }
         currentCommand = command
         return serialManager.sendCommand(command.commandString)
     }

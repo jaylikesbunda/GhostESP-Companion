@@ -5,5 +5,6 @@
 - Added better support for attaching multiple USB serial devices at once with auto baud rate detection
 - Added support for more serial USB devices
 - Added GPS/Wardriving support
+- Stop any previous command when running a new one
 
 ## v0.1.0 - Initial release
