@@ -29,7 +29,8 @@
             android:name=".MainActivity"
             android:exported="true"
             android:enableOnBackInvokedCallback="true"
-            android:theme="@style/Theme.GhostESPCompanion">
+            android:theme="@style/Theme.GhostESPCompanion"
+            tools:targetApi="33">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

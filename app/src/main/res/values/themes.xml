@@ -16,7 +16,6 @@
         
         <!-- Navigation bar - Light background with dark icons -->
         <item name="android:navigationBarColor">#FAFAFA</item>
-        <item name="android:windowLightNavigationBar">true</item>
         
         <!-- Window background - Off-white -->
         <item name="android:windowBackground">#FAFAFA</item>

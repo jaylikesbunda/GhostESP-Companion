@@ -17,7 +17,6 @@
         
         <!-- Navigation bar - Deep dark background -->
         <item name="android:navigationBarColor">#0A0A0A</item>
-        <item name="android:windowLightNavigationBar">false</item>
         
         <!-- Window background - Deep dark (neo-brutalist base) -->
         <item name="android:windowBackground">#0A0A0A</item>
