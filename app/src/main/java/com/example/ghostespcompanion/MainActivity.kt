@@ -1,11 +1,15 @@
 package com.example.ghostespcompanion
 
+import android.hardware.usb.UsbDevice
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -18,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -76,11 +81,19 @@ fun GhostESPApp(
     // Handle auto-connect on startup
     val connectionState by viewModel.connectionState.collectAsState()
     val hasAutoConnected = remember { mutableStateOf(false) }
+    var showDeviceDialog by remember { mutableStateOf(false) }
+    var availableDevices by remember { mutableStateOf<List<UsbDevice>>(emptyList()) }
     
     LaunchedEffect(autoConnect, connectionState) {
         if (autoConnect && !hasAutoConnected.value && connectionState == SerialManager.ConnectionState.DISCONNECTED) {
             hasAutoConnected.value = true
-            viewModel.connectFirstAvailable()
+            val devices = viewModel.getAvailableDevices()
+            availableDevices = devices
+            when (devices.size) {
+                0 -> { /* no devices, nothing to show */ }
+                1 -> viewModel.connectWithAutoBaud(devices.first())
+                else -> showDeviceDialog = true
+            }
         }
     }
     
@@ -157,6 +170,233 @@ fun GhostESPApp(
                 startDestination = Screen.Dashboard.route,
                 sharedViewModel = viewModel
             )
+        }
+        
+        if (showDeviceDialog) {
+            DeviceSelectionDialog(
+                devices = availableDevices,
+                usbDebugLog = viewModel.usbDebugLog.collectAsState().value,
+                onDeviceSelected = { device, baud ->
+                    showDeviceDialog = false
+                    viewModel.connectWithBaud(device, baud)
+                },
+                onRefresh = {
+                    availableDevices = viewModel.getAvailableDevices()
+                },
+                onDismiss = {
+                    showDeviceDialog = false
+                }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DeviceSelectionDialog(
+    devices: List<UsbDevice>,
+    usbDebugLog: List<String> = emptyList(),
+    onDeviceSelected: (UsbDevice, Int) -> Unit,
+    onRefresh: () -> Unit = {},
+    onDismiss: () -> Unit
+) {
+    var showDebugLog by remember { mutableStateOf(false) }
+    val baudRates = remember { listOf(9600, 57600, 115200, 230400, 420600, 460800, 921600) }
+    var selectedBaud by remember { mutableStateOf(115200) }
+    var baudExpanded by remember { mutableStateOf(false) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .heightIn(max = 500.dp)
+            ) {
+                Text(
+                    text = "Select Device",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                if (usbDebugLog.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(
+                        onClick = { showDebugLog = !showDebugLog },
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text(
+                            text = if (showDebugLog) "Hide Debug Log" else "Show Debug Log",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (showDebugLog && usbDebugLog.isNotEmpty()) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 160.dp)
+                            .padding(vertical = 8.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.background,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        LazyColumn(modifier = Modifier.padding(8.dp)) {
+                            items(usbDebugLog) { logLine ->
+                                Text(
+                                    text = logLine,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Baud rate selector
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Baud Rate",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    ExposedDropdownMenuBox(
+                        expanded = baudExpanded,
+                        onExpandedChange = { baudExpanded = it },
+                        modifier = Modifier.width(140.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { baudExpanded = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor()
+                        ) {
+                            Text(
+                                text = selectedBaud.toString(),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        ExposedDropdownMenu(
+                            expanded = baudExpanded,
+                            onDismissRequest = { baudExpanded = false }
+                        ) {
+                            baudRates.forEach { baud ->
+                                DropdownMenuItem(
+                                    text = { Text(baud.toString()) },
+                                    onClick = {
+                                        selectedBaud = baud
+                                        baudExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (devices.isEmpty()) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "No serial devices found",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Check USB connection and tap Refresh",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextButton(onClick = onRefresh) { Text("Refresh") }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 300.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(
+                            items = devices,
+                            key = { "${it.vendorId}-${it.productId}-${it.deviceName}" }
+                        ) { device ->
+                            Card(
+                                onClick = { onDeviceSelected(device, selectedBaud) },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = device.productName ?: device.deviceName.ifEmpty { "USB Device" },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    device.manufacturerName?.let { manufacturer ->
+                                        Text(
+                                            text = manufacturer,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "VID: 0x${device.vendorId.toString(16)}  PID: 0x${device.productId.toString(16)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "${device.interfaceCount} if",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
         }
     }
 }

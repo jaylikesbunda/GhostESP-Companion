@@ -1,5 +1,6 @@
 package com.example.ghostespcompanion.ui.screens.dashboard
 
+import android.hardware.usb.UsbDevice
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -13,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -45,6 +47,7 @@ import kotlinx.coroutines.delay
  * Shows connection status, device info, and quick stats for all modules.
  * Acts as the landing page when opening the app.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     viewModel: MainViewModel,
@@ -72,27 +75,40 @@ val connectionState by viewModel.connectionState.collectAsState()
     val isConnected = connectionState == SerialManager.ConnectionState.CONNECTED
     val privacyMode = appSettings.privacyMode
     
+    var showDeviceDialog by remember { mutableStateOf(false) }
+    var availableDevices by remember { mutableStateOf<List<UsbDevice>>(emptyList()) }
+    val allUsbDevices by remember { mutableStateOf(viewModel.getAllUsbDevices()) }
+    val usbDebugLog by viewModel.usbDebugLog.collectAsState()
+    
     MainScreen(title = "Dashboard") { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            contentPadding = PaddingValues(vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Connection Status Card
-            item {
-                ConnectionStatusCard(
-                    isConnected = isConnected,
-                    isLoading = isLoading,
-                    deviceInfo = deviceInfo,
-                    onConnectClick = { viewModel.connectFirstAvailable() },
-                    onDisconnectClick = { viewModel.disconnect() },
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-            }
-            
-            // Quick Stats Section - Links to More menu items
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentPadding = PaddingValues(vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+// Connection Status Card
+                item {
+                    ConnectionStatusCard(
+                        isConnected = isConnected,
+                        connectionState = connectionState,
+                        isLoading = isLoading,
+                        deviceInfo = deviceInfo,
+                        onConnectClick = {
+                            if (connectionState == SerialManager.ConnectionState.ERROR) {
+                                viewModel.forceDisconnect()
+                            }
+                            availableDevices = viewModel.getAvailableDevices()
+                            showDeviceDialog = true
+                        },
+                        onDisconnectClick = { viewModel.disconnect() },
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+                
+                // Quick Stats Section - Links to More menu items
             item {
                 BrutalistSectionHeader(
                     title = "Quick Links",
@@ -201,12 +217,31 @@ val connectionState by viewModel.connectionState.collectAsState()
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+            
+            // Device Selection Dialog
+            if (showDeviceDialog) {
+                DashboardDeviceSelectionDialog(
+                    devices = availableDevices,
+                    allUsbDevices = allUsbDevices,
+                    usbDebugLog = usbDebugLog,
+                    onDeviceSelected = { device ->
+                        showDeviceDialog = false
+                        viewModel.connect(device)
+                    },
+                    onDebugClick = {
+                        availableDevices = viewModel.getAvailableDevices()
+                    },
+                    onDismiss = { showDeviceDialog = false }
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun ConnectionStatusCard(
     isConnected: Boolean,
+    connectionState: SerialManager.ConnectionState,
     isLoading: Boolean,
     deviceInfo: GhostResponse.DeviceInfo?,
     onConnectClick: () -> Unit,
@@ -826,6 +861,170 @@ private fun ScanOverlay(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = actionText)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DashboardDeviceSelectionDialog(
+    devices: List<UsbDevice>,
+    allUsbDevices: List<UsbDevice> = emptyList(),
+    usbDebugLog: List<String> = emptyList(),
+    onDeviceSelected: (UsbDevice) -> Unit,
+    onDebugClick: () -> Unit = {},
+    onDismiss: () -> Unit
+) {
+    var showDebugLog by remember { mutableStateOf(false) }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = if (devices.isEmpty()) "No Devices Found" else "Select Device (${devices.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                if (usbDebugLog.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(
+                        onClick = { showDebugLog = !showDebugLog }
+                    ) {
+                        Text(
+                            text = if (showDebugLog) "Hide Debug Log" else "Show Debug Log (${usbDebugLog.size})",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = primaryColor()
+                        )
+                    }
+                }
+                
+                if (showDebugLog && usbDebugLog.isNotEmpty()) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 150.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        LazyColumn(
+                            modifier = Modifier.padding(8.dp)
+                        ) {
+                            items(usbDebugLog) { logLine ->
+                                Text(
+                                    text = logLine,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                if (devices.isEmpty()) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "No serial devices found",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        if (allUsbDevices.isNotEmpty()) {
+                            Text(
+                                text = "Raw USB devices: ${allUsbDevices.size}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = primaryColor()
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextButton(onClick = onDebugClick) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Refresh")
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 250.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(
+                            items = devices,
+                            key = { "${it.vendorId}-${it.productId}-${it.deviceName}" }
+                        ) { device ->
+                            Card(
+                                onClick = { onDeviceSelected(device) },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp)
+                                ) {
+                                    Text(
+                                        text = device.productName ?: device.deviceName.ifEmpty { "USB Device" },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    device.manufacturerName?.let { manufacturer ->
+                                        Text(
+                                            text = manufacturer,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = primaryColor()
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "VID: 0x${device.vendorId.toString(16)} PID: 0x${device.productId.toString(16)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "${device.interfaceCount} interfaces",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel")
+                    }
+                }
             }
         }
     }

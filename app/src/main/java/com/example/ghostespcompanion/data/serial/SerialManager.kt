@@ -7,6 +7,11 @@ import android.hardware.usb.UsbManager
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
+import com.hoho.android.usbserial.driver.CdcAcmSerialDriver
+import com.hoho.android.usbserial.driver.Cp21xxSerialDriver
+import com.hoho.android.usbserial.driver.FtdiSerialDriver
+import com.hoho.android.usbserial.driver.Ch34xSerialDriver
+import com.hoho.android.usbserial.driver.ProbeTable
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -85,6 +90,17 @@ class SerialManager @Inject constructor(
     // Debug log for chipinfo lifecycle — captures flush/skip/send events
     private val _chipInfoDebugLog = MutableStateFlow<List<String>>(emptyList())
     val chipInfoDebugLog: StateFlow<List<String>> = _chipInfoDebugLog.asStateFlow()
+    
+    // USB device detection log for UI display
+    private val _usbDebugLog = MutableStateFlow<List<String>>(emptyList())
+    val usbDebugLog: StateFlow<List<String>> = _usbDebugLog.asStateFlow()
+    
+    private fun usbLog(msg: String) {
+        val ts = System.currentTimeMillis() % 100_000
+        val newLog = (_usbDebugLog.value + "[$ts] $msg").takeLast(50)
+        _usbDebugLog.value = newLog
+        android.util.Log.d("SerialManager", msg)
+    }
 
     private fun chipInfoLog(msg: String) {
         val ts = System.currentTimeMillis() % 100_000
@@ -145,6 +161,10 @@ class SerialManager @Inject constructor(
     // Mutex to prevent concurrent connect/disconnect races
     private val connectionMutex = Mutex()
 
+    // Baud rate resolved during auto-detection (null = not yet detected)
+    private val _detectedBaudRate = MutableStateFlow<Int?>(null)
+    val detectedBaudRate: StateFlow<Int?> = _detectedBaudRate.asStateFlow()
+
     /**
      * Connection state enum
      */
@@ -155,13 +175,165 @@ class SerialManager @Inject constructor(
         ERROR
     }
 
+    companion object {
+        /** Ordered list of baud rates to probe. 115200 first — covers stock GhostESP firmware. */
+        private val PROBE_BAUD_RATES = listOf(115200, 9600, 57600, 230400, 420600, 460800, 921600)
+    }
+
+    /**
+     * Builds the custom probe table shared by getAvailableDevices(), connect(), and probeBaudRate().
+     */
+    private fun buildCustomProbeTable(): ProbeTable {
+        val table = ProbeTable()
+        table.addProduct(0x10C4, 0xEA60, Cp21xxSerialDriver::class.java)
+        table.addProduct(0x1A86, 0x55D4, Ch34xSerialDriver::class.java)
+        table.addProduct(0x1A86, 0x7522, Ch34xSerialDriver::class.java)
+        table.addProduct(0x1A86, 0x7523, Ch34xSerialDriver::class.java)
+        table.addProduct(0x0403, 0x6001, FtdiSerialDriver::class.java)
+        table.addProduct(0x0403, 0x6010, FtdiSerialDriver::class.java)
+        table.addProduct(0x0403, 0x6011, FtdiSerialDriver::class.java)
+        table.addProduct(0x0403, 0x6014, FtdiSerialDriver::class.java)
+        table.addProduct(0x0403, 0x6015, FtdiSerialDriver::class.java)
+        table.addProduct(0x303A, 0x4001, CdcAcmSerialDriver::class.java)
+        table.addProduct(0x303A, 0x4002, CdcAcmSerialDriver::class.java)
+        table.addProduct(0x239A, 0x800B, CdcAcmSerialDriver::class.java)
+        table.addProduct(0x239A, 0x0010, CdcAcmSerialDriver::class.java)
+        table.addProduct(0x2E8A, 0x000A, CdcAcmSerialDriver::class.java)
+        table.addProduct(0x2E8A, 0x0005, CdcAcmSerialDriver::class.java)
+        return table
+    }
+
+    /**
+     * Resolves a USB serial driver for [device] using the default prober,
+     * then the custom probe table, then a CDC ACM fallback.
+     */
+    private fun findDriver(device: UsbDevice): UsbSerialDriver? {
+        UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
+            .find { it.device == device }?.let { return it }
+
+        UsbSerialProber(buildCustomProbeTable()).findAllDrivers(usbManager)
+            .find { it.device == device }?.let { return it }
+
+        return try {
+            val cdc = CdcAcmSerialDriver(device)
+            if (cdc.ports.isNotEmpty()) cdc else null
+        } catch (e: Exception) { null }
+    }
+
     /**
      * Get list of available USB serial devices
+     * Uses the usb-serial-for-android library prober which supports:
+     * - FTDI FT232, FT2232, FT4232
+     * - CP210x
+     * - CH340, CH341, CH9102
+     * - CDC/ACM devices
      */
     fun getAvailableDevices(): List<UsbDevice> {
-        return UsbSerialProber.getDefaultProber()
-            .findAllDrivers(usbManager)
-            .mapNotNull { it.device }
+        _usbDebugLog.value = emptyList()
+        
+        val allDevices = usbManager.deviceList.values.toList()
+        usbLog("=== USB Device Scan ===")
+        usbLog("Total raw devices: ${allDevices.size}")
+        
+        allDevices.forEach { device ->
+            usbLog("Raw: ${device.deviceName} VID=0x${device.vendorId.toString(16)} PID=0x${device.productId.toString(16)} if=${device.interfaceCount}")
+        }
+        
+        val foundDevices = mutableListOf<UsbDevice>()
+        
+        val defaultProber = UsbSerialProber.getDefaultProber()
+        val defaultDrivers = defaultProber.findAllDrivers(usbManager)
+        
+        usbLog("Default prober: ${defaultDrivers.size} drivers")
+        defaultDrivers.forEach { driver ->
+            val device = driver.device
+            usbLog("  Default: ${device.deviceName} VID=0x${device.vendorId.toString(16)} PID=0x${device.productId.toString(16)}")
+            foundDevices.add(device)
+        }
+        
+        val customProber = UsbSerialProber(buildCustomProbeTable())
+        val customDrivers = customProber.findAllDrivers(usbManager)
+        
+        usbLog("Custom prober: ${customDrivers.size} drivers")
+        customDrivers.forEach { driver ->
+            val device = driver.device
+            if (device !in foundDevices) {
+                usbLog("  Custom: ${device.deviceName} VID=0x${device.vendorId.toString(16)} PID=0x${device.productId.toString(16)}")
+                foundDevices.add(device)
+            }
+        }
+        
+        var cdcCount = 0
+        for (device in allDevices) {
+            val isSerialDevice = try {
+                val testDriver = CdcAcmSerialDriver(device)
+                testDriver.ports.isNotEmpty()
+            } catch (e: Exception) {
+                false
+            }
+            
+            if (isSerialDevice && device !in foundDevices) {
+                usbLog("  CDC ACM: ${device.deviceName} VID=0x${device.vendorId.toString(16)} PID=0x${device.productId.toString(16)}")
+                foundDevices.add(device)
+                cdcCount++
+            }
+        }
+        
+        usbLog("CDC ACM fallback: $cdcCount additional")
+        usbLog("=== Total serial devices: ${foundDevices.size} ===")
+        
+        return foundDevices.distinctBy { "${it.vendorId}-${it.productId}-${it.deviceName}" }
+    }
+    
+    /**
+     * Get ALL USB devices attached (for debugging purposes)
+     * Returns devices even if not recognized as serial devices
+     */
+    fun getAllUsbDevices(): List<UsbDevice> {
+        val devices = usbManager.deviceList.values.toList()
+        usbLog("=== All USB Devices ===")
+        usbLog("Total count: ${devices.size}")
+        devices.forEach { device ->
+            usbLog("Device: ${device.deviceName}")
+            usbLog("  VID: 0x${device.vendorId.toString(16).uppercase()} PID: 0x${device.productId.toString(16).uppercase()}")
+            usbLog("  Interfaces: ${device.interfaceCount}")
+            usbLog("  Manufacturer: ${device.manufacturerName ?: "N/A"}")
+            usbLog("  Product: ${device.productName ?: "N/A"}")
+            usbLog("  Permission: ${if (usbManager.hasPermission(device)) "YES" else "NO"}")
+            
+            for (i in 0 until device.interfaceCount) {
+                val iface = device.getInterface(i)
+                usbLog("  Iface $i: class=${iface.interfaceClass} eps=${iface.endpointCount}")
+            }
+        }
+        usbLog("=== End All USB Devices ===")
+        return devices
+    }
+    
+    /**
+     * Debug function to log all USB device info
+     */
+    fun logAllUsbDevices() {
+        val devices = usbManager.deviceList.values
+        android.util.Log.i("SerialManager", "=== USB Device Debug (Manual) ===")
+        devices.forEach { device ->
+            android.util.Log.i("SerialManager", "Device: ${device.deviceName}")
+            android.util.Log.i("SerialManager", "  VendorID: 0x${device.vendorId.toString(16)} ProductID: 0x${device.productId.toString(16)}")
+            android.util.Log.i("SerialManager", "  Interfaces: ${device.interfaceCount}")
+            android.util.Log.i("SerialManager", "  Manufacturer: ${device.manufacturerName ?: "N/A"}")
+            android.util.Log.i("SerialManager", "  Product: ${device.productName ?: "N/A"}")
+            android.util.Log.i("SerialManager", "  HasPermission: ${usbManager.hasPermission(device)}")
+            
+            for (i in 0 until device.interfaceCount) {
+                val iface = device.getInterface(i)
+                android.util.Log.i("SerialManager", "  Interface $i: class=${iface.interfaceClass} endpoints=${iface.endpointCount}")
+                for (j in 0 until iface.endpointCount) {
+                    val ep = iface.getEndpoint(j)
+                    android.util.Log.i("SerialManager", "    Endpoint $j: addr=0x${ep.address.toString(16)} dir=${if (ep.direction == 0) "OUT" else "IN"} type=${ep.type}")
+                }
+            }
+        }
+        android.util.Log.i("SerialManager", "=== End USB Device Debug ===")
     }
 
     /**
@@ -173,22 +345,16 @@ class SerialManager @Inject constructor(
      * - Force-closes previous connection before attempting new one
      */
     @Suppress("DEPRECATION")
-    suspend fun connect(device: UsbDevice): Boolean = connectionMutex.withLock {
-        // Prevent double-connect attempts
+    suspend fun connect(device: UsbDevice, baudRate: Int = 115200): Boolean = connectionMutex.withLock {
         if (isConnecting.get()) {
             return@withLock false
         }
-        
+
         isConnecting.set(true)
-        
-        // Always do a clean disconnect first, regardless of current state
-        // Use withTimeout to prevent hanging if disconnect gets stuck
+
         try {
-            withTimeout(2000) {
-                disconnectInternal()
-            }
+            withTimeout(2000) { disconnectInternal() }
         } catch (e: TimeoutCancellationException) {
-            // If disconnect times out, force reset
             forceReset()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -198,14 +364,18 @@ class SerialManager @Inject constructor(
         _connectionState.value = ConnectionState.CONNECTING
 
         try {
-            val drivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
-            serialDriver = drivers.find { it.device == device }
+            android.util.Log.d("SerialManager", "Connecting to ${device.deviceName} @ $baudRate baud")
+
+            serialDriver = findDriver(device)
 
             if (serialDriver == null) {
+                android.util.Log.e("SerialManager", "Could not find serial driver for device")
                 _connectionState.value = ConnectionState.ERROR
                 isConnecting.set(false)
                 return@withLock false
             }
+
+            android.util.Log.d("SerialManager", "Driver: ${serialDriver!!::class.simpleName} (${serialDriver!!.ports.size} ports)")
 
             serialPort = serialDriver!!.ports.firstOrNull() ?: run {
                 _connectionState.value = ConnectionState.ERROR
@@ -220,7 +390,7 @@ class SerialManager @Inject constructor(
             }
 
             serialPort?.open(usbConnection)
-            serialPort?.setParameters(115200, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+            serialPort?.setParameters(baudRate, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
 
             serialPort?.setDTR(true)
             serialPort?.setRTS(true)
@@ -246,15 +416,15 @@ class SerialManager @Inject constructor(
         binaryHeaderBuffer.reset()
         isCollectingBinaryHeader = false
 
-        isConnectedFlag.set(true)
-        isConnecting.set(false)
-        startReading()
-        startConsumer()
-        startFlushTimer()
+            isConnectedFlag.set(true)
+            isConnecting.set(false)
+            startReading()
+            startConsumer()
+            startFlushTimer()
 
-        _connectionState.value = ConnectionState.CONNECTED
-        true
-    } catch (e: Exception) {
+            _connectionState.value = ConnectionState.CONNECTED
+            true
+        } catch (e: Exception) {
             e.printStackTrace()
             _connectionState.value = ConnectionState.ERROR
             isConnecting.set(false)
@@ -279,6 +449,81 @@ class SerialManager @Inject constructor(
             connect(devices.first())
         } else {
             false
+        }
+    }
+
+    /**
+     * Connect with automatic baud rate detection.
+     *
+     * Probes each rate in PROBE_BAUD_RATES by opening the port, sending "\r\n",
+     * and checking whether the response is valid ASCII (GhostESP echoes "ghost-cli>").
+     * Falls back to 115200 if no baud rate produces a readable response (e.g. device
+     * is silent at startup, or uses native USB CDC which ignores the baud setting).
+     *
+     * For native USB CDC devices (ESP32-S3 JTAG) the rate is a no-op — 115200 will
+     * succeed on the first probe and connect immediately.
+     */
+    suspend fun connectWithAutoBaud(device: UsbDevice): Boolean {
+        val baud = withContext(Dispatchers.IO) { detectBaudRate(device) } ?: 115200
+        _detectedBaudRate.value = baud
+        usbLog("Auto-baud result: $baud")
+        return connect(device, baud)
+    }
+
+    /**
+     * Iterate PROBE_BAUD_RATES and return the first one that yields a valid ASCII
+     * response, or null if none do (caller should fall back to 115200).
+     */
+    private suspend fun detectBaudRate(device: UsbDevice): Int? {
+        for (baud in PROBE_BAUD_RATES) {
+            if (probeBaudRate(device, baud)) return baud
+        }
+        return null
+    }
+
+    /**
+     * Open [device] at [baud], send a "\r\n" probe, wait 350 ms, then check whether
+     * >= 75 % of the received bytes are printable ASCII. Returns true on a match.
+     *
+     * The probe port is opened and closed independently of the main connection so it
+     * doesn't disturb the connection mutex or the main serial state.
+     * DTR/RTS are intentionally NOT toggled here to avoid accidentally resetting the ESP.
+     */
+    private suspend fun probeBaudRate(device: UsbDevice, baud: Int): Boolean = withContext(Dispatchers.IO) {
+        var probePort: UsbSerialPort? = null
+        var probeConnection: android.hardware.usb.UsbDeviceConnection? = null
+        try {
+            val driver = findDriver(device) ?: return@withContext false
+            probePort = driver.ports.firstOrNull() ?: return@withContext false
+            probeConnection = usbManager.openDevice(device) ?: return@withContext false
+
+            probePort.open(probeConnection)
+            probePort.setParameters(baud, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+
+            probePort.write("\r\n".toByteArray(Charsets.US_ASCII), 500)
+            delay(350)
+
+            val buf = ByteArray(256)
+            val n = probePort.read(buf, 500)
+
+            if (n > 3) {
+                val printable = (0 until n).count { i ->
+                    val b = buf[i].toInt() and 0xFF
+                    b in 0x20..0x7E || b == 0x0D || b == 0x0A
+                }
+                val ratio = printable.toFloat() / n
+                usbLog("Probe $baud baud: $n bytes, printable ratio=%.2f".format(ratio))
+                ratio >= 0.75f
+            } else {
+                usbLog("Probe $baud baud: no response ($n bytes)")
+                false
+            }
+        } catch (e: Exception) {
+            usbLog("Probe $baud baud error: ${e.message}")
+            false
+        } finally {
+            try { probePort?.close() } catch (_: Exception) {}
+            try { probeConnection?.close() } catch (_: Exception) {}
         }
     }
 
@@ -794,6 +1039,23 @@ class SerialManager @Inject constructor(
                     sendToResponseChannel(cleanLine.trim())
                 }
             }
+            LineType.GPS_START -> {
+                // Flush any previous accumulation
+                if (isAccumulatingMultiline && multilineBuffer.isNotEmpty()) {
+                    sendToResponseChannel(multilineBuffer.toString())
+                }
+                multilineBuffer.clear()
+                multilineBuffer.append(cleanLine)
+                isAccumulatingMultiline = true
+                multilineType = lineType
+            }
+            LineType.GPS_CONTINUATION -> {
+                if (isAccumulatingMultiline) {
+                    multilineBuffer.append("\n").append(cleanLine.trim())
+                } else {
+                    sendToResponseChannel(cleanLine.trim())
+                }
+            }
             LineType.CONTINUATION -> {
                 if (isAccumulatingMultiline) {
                     multilineBuffer.append(", ").append(cleanLine.trim())
@@ -940,6 +1202,42 @@ class SerialManager @Inject constructor(
             return LineType.WIFI_STATUS_CONTINUATION
         }
 
+        // GPS info start - "GPS Info" or "Acquiring GPS" starts a multiline block
+        if (trimmed.startsWith("GPS Info") || trimmed == "Acquiring GPS") {
+            return LineType.GPS_START
+        }
+
+        // GPS continuation - lines that are part of GPS output
+        if (isAccumulatingMultiline && multilineType == LineType.GPS_START) {
+            if (trimmed.startsWith("Fix:") || trimmed.startsWith("Sats:") ||
+                trimmed.startsWith("Lat:") || trimmed.startsWith("Long:") ||
+                trimmed.startsWith("Alt:") || trimmed.startsWith("Speed:") ||
+                trimmed.startsWith("Direction:") || trimmed.startsWith("HDOP:") ||
+                trimmed.startsWith("Acquiring GPS")) {
+                return LineType.GPS_CONTINUATION
+            }
+        }
+
+        // Wardrive start - similar multiline format to GPS
+        if (trimmed.startsWith("Wardrive Info") || trimmed.startsWith("Wardrive Status")) {
+            return LineType.GPS_START  // Reuse GPS_START for wardrive multiline
+        }
+
+        // Wardrive continuation - lines that are part of wardrive output
+        if (isAccumulatingMultiline && multilineType == LineType.GPS_START && 
+            (trimmed.startsWith("APs:") || trimmed.startsWith("Logged:") ||
+             trimmed.startsWith("GPS Fix:") || trimmed.startsWith("Channel:") ||
+             trimmed.startsWith("Uptime:") || trimmed.startsWith("Pending:") ||
+             trimmed.startsWith("BLE:") || trimmed.startsWith("Accuracy:"))) {
+            return LineType.GPS_CONTINUATION
+        }
+
+        // Wardrive heartbeat (new firmware format) - "GPS: Locked", "GPS: No Fix" etc.
+        // NOT "GPS Info" (that's the gpsinfo command output)
+        if (trimmed.startsWith("GPS:") && !trimmed.startsWith("GPS Info")) {
+            return LineType.GPS_START
+        }
+
         // Continuation lines - but NOT if trimmed starts with [ (those are IR buttons)
         if ((line.startsWith("  ") || line.startsWith("\t") || line.startsWith(" ")) && !trimmed.startsWith("[")) {
             return LineType.CONTINUATION
@@ -949,7 +1247,7 @@ class SerialManager @Inject constructor(
     }
 
     private enum class LineType {
-        AP_START, FLIPPER_START, AIRTAG_START, STATION_START, GATT_START, CHIP_INFO_START, TRACK_HEADER_START, IR_REMOTE, IR_BUTTON, HANDSHAKE_START, HANDSHAKE_CONTINUATION, WIFI_STATUS_START, WIFI_STATUS_CONTINUATION, CONTINUATION, SINGLE
+        AP_START, FLIPPER_START, AIRTAG_START, STATION_START, GATT_START, CHIP_INFO_START, TRACK_HEADER_START, IR_REMOTE, IR_BUTTON, HANDSHAKE_START, HANDSHAKE_CONTINUATION, WIFI_STATUS_START, WIFI_STATUS_CONTINUATION, GPS_START, GPS_CONTINUATION, CONTINUATION, SINGLE
     }
 
     /**
@@ -1007,7 +1305,8 @@ data class GhostSerialResponse(
         HANDSHAKE,
         PCAP_FILE,
         WIFI_CONNECTION,
-        WIFI_STATUS
+        WIFI_STATUS,
+        WARDDRIVE_STATS
     }
 
     // Lazy evaluation of type for performance
@@ -1033,7 +1332,20 @@ data class GhostSerialResponse(
 
             raw.contains("NFC Tag") -> ResponseType.NFC_TAG
 
+            raw.contains("Wardrive Info") && (raw.contains("APs:") || raw.contains("Logged:")) -> ResponseType.WARDDRIVE_STATS
+
+            // Wardrive heartbeat new format: "GPS: Locked\nAPs: 9\nSats: 16/9\n..." or BLE: "GPS: Locked\nBLE: 16\n..."
+            raw.startsWith("GPS:") && (raw.contains("APs:") || raw.contains("BLE:")) -> ResponseType.WARDDRIVE_STATS
+
+            raw.contains("GPS Info") -> ResponseType.GPS_POSITION
+
+            raw.contains("Wardrive:") && raw.contains("ap=") && raw.contains("logged=") -> ResponseType.WARDDRIVE_STATS
+
             raw.contains("Lat:") && raw.contains("Lon:") -> ResponseType.GPS_POSITION
+
+            raw.contains("Wardrive:") && raw.contains("ap=") -> ResponseType.WARDDRIVE_STATS
+
+            raw.contains("GPS Info") || raw.contains("Acquiring GPS") -> ResponseType.GPS_POSITION
 
             raw.startsWith("SD:") -> ResponseType.SD_ENTRY
 

@@ -87,6 +87,7 @@ dependencies {
     // Kotlin
     implementation(libs.kotlin.stdlib)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.kotlinx.serialization.json)
     
     // USB Serial
@@ -97,6 +98,12 @@ dependencies {
     
     // Google Fonts
     implementation(libs.google.fonts)
+    
+    // OSMDroid
+    implementation(libs.osm.droid)
+    
+    // Location Services
+    implementation(libs.play.services.location)
     
     // Testing
     testImplementation(libs.junit)

@@ -4,6 +4,7 @@ import android.content.Context
 import android.hardware.usb.UsbDevice
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.ghostespcompanion.data.LocationHelper
 import com.example.ghostespcompanion.data.repository.AppSettings
 import com.example.ghostespcompanion.data.repository.FileTransferProgress
 import com.example.ghostespcompanion.data.repository.GhostRepository
@@ -32,7 +33,8 @@ import javax.inject.Inject
 class MainViewModel @Inject constructor(
     private val ghostRepository: GhostRepository,
     private val settingsManager: SettingsManager,
-    private val preferencesRepository: PreferencesRepository
+    private val preferencesRepository: PreferencesRepository,
+    val locationHelper: LocationHelper
 ) : ViewModel() {
 
     // App settings from DataStore
@@ -167,7 +169,14 @@ class MainViewModel @Inject constructor(
     // Handshake capture
     val handshakeEvents: SharedFlow<GhostResponse.Handshake> = ghostRepository.handshakeEvents
     val pcapFile: StateFlow<String?> = ghostRepository.pcapFile
-
+    
+    // GPS and Wardriving
+    val gpsPosition: StateFlow<GhostResponse.GpsPosition?> = ghostRepository.gpsPosition
+    val wardriveStats: StateFlow<GhostResponse.WardriveStats?> = ghostRepository.wardriveStats
+    val isWardriving: StateFlow<Boolean> = ghostRepository.isWardriving
+    val isBleWardriving: StateFlow<Boolean> = ghostRepository.isBleWardriving
+    val isGpsTracking: StateFlow<Boolean> = ghostRepository.isGpsTracking
+    
     // Loading state
     val isLoading: StateFlow<Boolean> = ghostRepository.isLoading
 
@@ -181,16 +190,38 @@ class MainViewModel @Inject constructor(
     val chipInfoRaw: StateFlow<String?> = ghostRepository.chipInfoRaw
     val chipInfoParseStatus: StateFlow<String?> = ghostRepository.chipInfoParseStatus
     val chipInfoDebugLog: StateFlow<List<String>> = ghostRepository.chipInfoDebugLog
+    
+    // USB device detection debug log
+    val usbDebugLog: StateFlow<List<String>> = ghostRepository.usbDebugLog
 
     // ==================== Connection ====================
 
     fun getAvailableDevices(): List<UsbDevice> = ghostRepository.getAvailableDevices()
+    
+    fun getAllUsbDevices(): List<UsbDevice> = ghostRepository.getAllUsbDevices()
+    
+    fun logUsbDebug() = ghostRepository.logUsbDebug()
 
     fun connect(device: UsbDevice) {
         viewModelScope.launch(Dispatchers.IO) {
             ghostRepository.connect(device)
         }
     }
+
+    fun connectWithAutoBaud(device: UsbDevice) {
+        viewModelScope.launch(Dispatchers.IO) {
+            ghostRepository.connectWithAutoBaud(device)
+        }
+    }
+
+    fun connectWithBaud(device: UsbDevice, baudRate: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            ghostRepository.connect(device, baudRate)
+        }
+    }
+
+    val detectedBaudRate: StateFlow<Int?> = ghostRepository.detectedBaudRate
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     fun connectFirstAvailable() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -456,6 +487,14 @@ class MainViewModel @Inject constructor(
 
     fun stopWardrive() {
         viewModelScope.launch(Dispatchers.IO) { ghostRepository.stopWardrive() }
+    }
+
+    fun startBleWardrive() {
+        viewModelScope.launch(Dispatchers.IO) { ghostRepository.startBleWardrive() }
+    }
+
+    fun stopBleWardrive() {
+        viewModelScope.launch(Dispatchers.IO) { ghostRepository.stopBleWardrive() }
     }
 
     // ==================== SD Card ====================

@@ -130,13 +130,58 @@ private object ResponsePatterns {
     val NFC_TYPE = Regex("NFC Tag Found:\\s*(\\w+)")
     val NFC_UID = Regex("UID:\\s*([0-9A-Fa-f]+)")
     
-    // GPS position
-    val GPS_LAT = Regex("Lat:\\s*(-?\\d+\\.\\d+)")
-    val GPS_LON = Regex("Lon:\\s*(-?\\d+\\.\\d+)")
-    val GPS_ALT = Regex("Alt:\\s*(-?\\d+\\.\\d+)")
-    val GPS_SPEED = Regex("Speed:\\s*(-?\\d+\\.\\d+)")
-    val GPS_SATS = Regex("Sats:\\s*(\\d+)")
-    val GPS_FIX = Regex("Fix:\\s*(\\w+)")
+    // GPS position - firmware output format:
+    // GPS Info
+    // Fix: 3D/2D
+    // Sats: 8/9 in view
+    // Lat: 31deg 54.7830'S
+    // Long: 115deg 51.6300'E
+    // Alt: 15.1m
+    // Speed: 0.0 km/h
+    // Direction: 276° WNW
+    // HDOP: 1.0
+    val GPS_FIX = Regex("Fix:\\s*(\\S+)")
+    val GPS_SATS = Regex("Sats:\\s*(\\d+)(?:/(\\d+))?")
+    val GPS_LAT = Regex("Lat:\\s*(\\d+)deg\\s+([\\d.]+)'([NS])")
+    val GPS_LON = Regex("Long:\\s*(\\d+)deg\\s+([\\d.]+)'([EW])")
+    val GPS_ALT = Regex("Alt:\\s*([\\d.]+)m")
+    val GPS_SPEED = Regex("Speed:\\s*([\\d.]+)\\s*km/h")
+    val GPS_DIRECTION = Regex("Direction:\\s*(\\d+)°\\s*(\\S+)")
+    val GPS_HDOP = Regex("HDOP:\\s*([\\d.]+)")
+    
+    // Wardrive heartbeat - firmware output format:
+    // Wardrive: ap=123 logged=45/67 gpsrej=3 ch=1 up=0m42s gps=No Fix/3 pending=0B
+    val WARDDRIVE_HEARTBEAT = Regex(
+        "Wardrive:\\s*ap=(\\d+)\\s+logged=(\\d+)/(\\d+)\\s+gpsrej=(\\d+)\\s+ch=(\\d+)\\s+up=(\\d+)m(\\d+)s\\s+gps=([^/]+)/(\\d+)(?:\\s+sats=(\\d+))?\\s+pending=(\\d+)B"
+    )
+    
+    // Wardrive multiline info - firmware output format (like GPS):
+    // Wardrive Info
+    // APs: 123
+    // Logged: 45/67
+    // GPS Fix: 3D/8
+    // Channel: 1
+    // Uptime: 0m42s
+    // Pending: 0B
+    // BLE: 50
+    val WARDDRIVE_INFO = Regex("Wardrive\\s+Info", RegexOption.IGNORE_CASE)
+    val WARDDRIVE_APS = Regex("APs:\\s*(\\d+)")
+    val WARDDRIVE_LOGGED = Regex("Logged:\\s*(\\d+)/(\\d+)")
+    val WARDDRIVE_GPS_FIX = Regex("GPS Fix:\\s*([^/]+)/(\\d+)")
+    val WARDDRIVE_CHANNEL = Regex("Channel:\\s*(\\d+)")
+    val WARDDRIVE_UPTIME = Regex("Uptime:\\s*(\\d+)m(\\d+)s")
+    val WARDDRIVE_PENDING = Regex("Pending:\\s*(\\d+)B")
+    val WARDDRIVE_BLE = Regex("BLE:\\s*(\\d+)")
+    
+    // Wardrive heartbeat new firmware format:
+    // GPS: Locked
+    // APs: 9
+    // Sats: 16/9
+    // Speed: 0.5 km/h
+    // Accuracy: Good
+    val WARDRIVE_GPS_STATUS = Regex("^GPS:\\s*(.+)", RegexOption.MULTILINE)
+    val WARDRIVE_SATS = Regex("Sats:\\s*(\\d+)(?:/(\\d+))?")
+    val WARDRIVE_ACCURACY = Regex("Accuracy:\\s*(\\S+)")
     
     // Error/Success
     val ERROR = Regex("ERROR:\\s*(.+)")
@@ -1195,33 +1240,180 @@ data class Handshake(
     
     // ==================== GPS Models ====================
     
-    /** GPS Position */
+    /** GPS Position - parsed from firmware gpsinfo command output */
     data class GpsPosition(
         val latitude: Double,
         val longitude: Double,
         val altitude: Double?,
         val speed: Float?,
         val satellites: Int,
-        val fix: Boolean
+        val satellitesInView: Int,
+        val fix: Boolean,
+        val fixType: String,
+        val hdop: Float?,
+        val direction: Int?,
+        val directionName: String?
     ) : GhostResponse() {
         companion object {
             fun parse(line: String): GpsPosition? {
-                if (!line.contains("Lat:") && !line.contains("Lon:")) return null
+                if (!line.contains("GPS Info") && !line.contains("Lat:") && !line.contains("Lon:")) return null
                 
-                val lat = ResponsePatterns.GPS_LAT.find(line)?.groupValues?.get(1)?.toDoubleOrNull() ?: return null
-                val lon = ResponsePatterns.GPS_LON.find(line)?.groupValues?.get(1)?.toDoubleOrNull() ?: return null
+                val fixStr = ResponsePatterns.GPS_FIX.find(line)?.groupValues?.get(1) ?: "No Fix"
+                val hasFix = fixStr.equals("3D", ignoreCase = true) || fixStr.equals("2D", ignoreCase = true) || fixStr.equals("Fix", ignoreCase = true)
+                
+                val satsMatch = ResponsePatterns.GPS_SATS.find(line)
+                val satsUsed = satsMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                val satsInView = satsMatch?.groupValues?.get(2)?.toIntOrNull() ?: satsUsed
+                
+                val latMatch = ResponsePatterns.GPS_LAT.find(line)
+                val lonMatch = ResponsePatterns.GPS_LON.find(line)
+                
+                if (latMatch == null || lonMatch == null) {
+                    return GpsPosition(
+                        latitude = 0.0,
+                        longitude = 0.0,
+                        altitude = null,
+                        speed = null,
+                        satellites = satsUsed,
+                        satellitesInView = satsInView,
+                        fix = hasFix,
+                        fixType = fixStr,
+                        hdop = null,
+                        direction = null,
+                        directionName = null
+                    )
+                }
+                
+                val latDeg = latMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+                val latMin = latMatch.groupValues[2].toDoubleOrNull() ?: 0.0
+                val latDir = latMatch.groupValues[3]
+                val latitude = (latDeg + latMin / 60.0) * if (latDir == "S") -1.0 else 1.0
+                
+                val lonDeg = lonMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+                val lonMin = lonMatch.groupValues[2].toDoubleOrNull() ?: 0.0
+                val lonDir = lonMatch.groupValues[3]
+                val longitude = (lonDeg + lonMin / 60.0) * if (lonDir == "W") -1.0 else 1.0
+                
                 val alt = ResponsePatterns.GPS_ALT.find(line)?.groupValues?.get(1)?.toDoubleOrNull()
                 val speed = ResponsePatterns.GPS_SPEED.find(line)?.groupValues?.get(1)?.toFloatOrNull()
-                val sats = ResponsePatterns.GPS_SATS.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                val fixStr = ResponsePatterns.GPS_FIX.find(line)?.groupValues?.get(1) ?: "No Fix"
+                val hdop = ResponsePatterns.GPS_HDOP.find(line)?.groupValues?.get(1)?.toFloatOrNull()
+                
+                val dirMatch = ResponsePatterns.GPS_DIRECTION.find(line)
+                val direction = dirMatch?.groupValues?.get(1)?.toIntOrNull()
+                val directionName = dirMatch?.groupValues?.get(2)
                 
                 return GpsPosition(
-                    latitude = lat,
-                    longitude = lon,
+                    latitude = latitude,
+                    longitude = longitude,
                     altitude = alt,
                     speed = speed,
-                    satellites = sats,
-                    fix = fixStr.equals("Fix", ignoreCase = true) || fixStr.equals("3D", ignoreCase = true)
+                    satellites = satsUsed,
+                    satellitesInView = satsInView,
+                    fix = hasFix,
+                    fixType = fixStr,
+                    hdop = hdop,
+                    direction = direction,
+                    directionName = directionName
+                )
+            }
+        }
+    }
+    
+    /** Wardrive Statistics - parsed from firmware wardrive output (both heartbeat and multiline formats) */
+    data class WardriveStats(
+        val accessPoints: Int,
+        val loggedOk: Int,
+        val logAttempts: Int,
+        val gpsRejected: Int,
+        val channel: Int,
+        val uptimeMinutes: Int,
+        val uptimeSeconds: Int,
+        val gpsFixStatus: String,
+        val gpsSatellites: Int,
+        val pendingBytes: Int,
+        val bleDevices: Int = 0
+    ) : GhostResponse() {
+        companion object {
+            fun parse(line: String): WardriveStats? {
+                 // Check for multiline format first (like GPS info)
+                if (line.contains("Wardrive") && (line.contains("APs:") || line.contains("Logged:") || line.contains("GPS Fix:"))) {
+                    val aps = ResponsePatterns.WARDDRIVE_APS.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val loggedMatch = ResponsePatterns.WARDDRIVE_LOGGED.find(line)
+                    val loggedOk = loggedMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val logAttempts = loggedMatch?.groupValues?.get(2)?.toIntOrNull() ?: 0
+                    val gpsFixMatch = ResponsePatterns.WARDDRIVE_GPS_FIX.find(line)
+                    val gpsFixStatus = gpsFixMatch?.groupValues?.get(1) ?: "No Fix"
+                    val gpsSatellites = gpsFixMatch?.groupValues?.get(2)?.toIntOrNull() ?: 0
+                    val channel = ResponsePatterns.WARDDRIVE_CHANNEL.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                    val uptimeMatch = ResponsePatterns.WARDDRIVE_UPTIME.find(line)
+                    val uptimeMinutes = uptimeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val uptimeSeconds = uptimeMatch?.groupValues?.get(2)?.toIntOrNull() ?: 0
+                    val pendingBytes = ResponsePatterns.WARDDRIVE_PENDING.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val bleDevices = ResponsePatterns.WARDDRIVE_BLE.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    
+                    return WardriveStats(
+                        accessPoints = aps,
+                        loggedOk = loggedOk,
+                        logAttempts = logAttempts,
+                        gpsRejected = 0,
+                        channel = channel,
+                        uptimeMinutes = uptimeMinutes,
+                        uptimeSeconds = uptimeSeconds,
+                        gpsFixStatus = gpsFixStatus,
+                        gpsSatellites = gpsSatellites,
+                        pendingBytes = pendingBytes,
+                        bleDevices = bleDevices
+                    )
+                }
+                
+                // New firmware format: GPS: Locked\nAPs: 9\nSats: 16/9\nSpeed: 0.5 km/h\nAccuracy: Good
+                // Also handles BLE wardrive: GPS: Locked\nBLE: 16\nSats: 6/9\nSpeed: 10.8 km/h\nAccuracy: Fair
+                if (line.startsWith("GPS:") && (line.contains("APs:") || line.contains("BLE:"))) {
+                    val gpsStatus = ResponsePatterns.WARDRIVE_GPS_STATUS.find(line)?.groupValues?.get(1)?.trim() ?: "Unknown"
+                    val aps = ResponsePatterns.WARDDRIVE_APS.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val bleDevices = ResponsePatterns.WARDDRIVE_BLE.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val satsMatch = ResponsePatterns.WARDRIVE_SATS.find(line)
+                    val satsUsed = satsMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    
+                    // Map firmware status to fix type
+                    val fixStatus = when {
+                        gpsStatus.equals("Locked", ignoreCase = true) -> "3D"
+                        gpsStatus.contains("No", ignoreCase = true) -> "No Fix"
+                        else -> gpsStatus
+                    }
+                    
+                    return WardriveStats(
+                        accessPoints = aps,
+                        loggedOk = 0,
+                        logAttempts = 0,
+                        gpsRejected = 0,
+                        channel = 0,
+                        uptimeMinutes = 0,
+                        uptimeSeconds = 0,
+                        gpsFixStatus = fixStatus,
+                        gpsSatellites = satsUsed,
+                        pendingBytes = 0,
+                        bleDevices = bleDevices
+                    )
+                }
+                
+                // Fallback to heartbeat format
+                if (!line.contains("Wardrive:") || !line.contains("ap=")) return null
+                
+                val match = ResponsePatterns.WARDDRIVE_HEARTBEAT.find(line) ?: return null
+                
+                return WardriveStats(
+                    accessPoints = match.groupValues[1].toIntOrNull() ?: 0,
+                    loggedOk = match.groupValues[2].toIntOrNull() ?: 0,
+                    logAttempts = match.groupValues[3].toIntOrNull() ?: 0,
+                    gpsRejected = match.groupValues[4].toIntOrNull() ?: 0,
+                    channel = match.groupValues[5].toIntOrNull() ?: 1,
+                    uptimeMinutes = match.groupValues[6].toIntOrNull() ?: 0,
+                    uptimeSeconds = match.groupValues[7].toIntOrNull() ?: 0,
+                    gpsFixStatus = match.groupValues[8],
+                    gpsSatellites = match.groupValues[9].toIntOrNull() ?: 0,
+                    pendingBytes = match.groupValues[11].toIntOrNull() ?: 0,
+                    bleDevices = 0
                 )
             }
         }

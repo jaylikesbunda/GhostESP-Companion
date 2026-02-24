@@ -1,6 +1,7 @@
 package com.example.ghostespcompanion.di
 
 import android.content.Context
+import com.example.ghostespcompanion.data.LocationHelper
 import com.example.ghostespcompanion.data.repository.GhostRepository
 import com.example.ghostespcompanion.data.repository.PreferencesRepository
 import com.example.ghostespcompanion.data.repository.SettingsManager
@@ -50,5 +51,13 @@ object AppModule {
         preferencesRepository: PreferencesRepository
     ): SettingsManager {
         return SettingsManager(context, preferencesRepository)
+    }
+    
+    @Provides
+    @Singleton
+    fun provideLocationHelper(
+        @ApplicationContext context: Context
+    ): LocationHelper {
+        return LocationHelper(context)
     }
 }

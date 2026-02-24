@@ -1,0 +1,9 @@
+# GhostESP: Companion Changelog
+
+## v0.2.0
+
+- Added better support for attaching multiple USB serial devices at once with auto baud rate detection
+- Added support for more serial USB devices
+- Added GPS/Wardriving support
+
+## v0.1.0 - Initial release

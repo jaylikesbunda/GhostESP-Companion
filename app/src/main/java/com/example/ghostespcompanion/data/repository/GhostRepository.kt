@@ -121,6 +121,8 @@ class GhostRepository @Inject constructor(
 
     // Serial-manager level debug log (flush/timer events) forwarded through the repository
     val chipInfoDebugLog: StateFlow<List<String>> = serialManager.chipInfoDebugLog
+    
+    val usbDebugLog: StateFlow<List<String>> = serialManager.usbDebugLog
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -138,6 +140,22 @@ class GhostRepository @Inject constructor(
 
     private val _trackHeader = MutableStateFlow<GhostResponse.TrackHeader?>(null)
     val trackHeader: StateFlow<GhostResponse.TrackHeader?> = _trackHeader.asStateFlow()
+    
+    // GPS and Wardriving state
+    private val _gpsPosition = MutableStateFlow<GhostResponse.GpsPosition?>(null)
+    val gpsPosition: StateFlow<GhostResponse.GpsPosition?> = _gpsPosition.asStateFlow()
+    
+    private val _wardriveStats = MutableStateFlow<GhostResponse.WardriveStats?>(null)
+    val wardriveStats: StateFlow<GhostResponse.WardriveStats?> = _wardriveStats.asStateFlow()
+    
+    private val _isWardriving = MutableStateFlow(false)
+    val isWardriving: StateFlow<Boolean> = _isWardriving.asStateFlow()
+    
+    private val _isBleWardriving = MutableStateFlow(false)
+    val isBleWardriving: StateFlow<Boolean> = _isBleWardriving.asStateFlow()
+    
+    private val _isGpsTracking = MutableStateFlow(false)
+    val isGpsTracking: StateFlow<Boolean> = _isGpsTracking.asStateFlow()
     
     // Handshake capture state - using SharedFlow to emit each handshake event
     private val _handshakeEvents = MutableSharedFlow<GhostResponse.Handshake>(replay = 0, extraBufferCapacity = 16)
@@ -214,11 +232,24 @@ class GhostRepository @Inject constructor(
      * Get available USB devices
      */
     fun getAvailableDevices(): List<UsbDevice> = serialManager.getAvailableDevices()
+    
+    fun getAllUsbDevices(): List<UsbDevice> = serialManager.getAllUsbDevices()
+    
+    fun logUsbDebug() = serialManager.logAllUsbDevices()
 
     /**
      * Connect to a specific device
      */
     suspend fun connect(device: UsbDevice): Boolean = serialManager.connect(device)
+
+    suspend fun connect(device: UsbDevice, baudRate: Int): Boolean = serialManager.connect(device, baudRate)
+
+    /**
+     * Connect with automatic baud rate detection
+     */
+    suspend fun connectWithAutoBaud(device: UsbDevice): Boolean = serialManager.connectWithAutoBaud(device)
+
+    val detectedBaudRate = serialManager.detectedBaudRate
 
     /**
      * Connect to first available device
@@ -607,6 +638,7 @@ class GhostRepository @Inject constructor(
      * Get GPS info
      */
     suspend fun getGpsInfo() {
+        _isGpsTracking.value = true
         sendCommand(GhostCommand.GpsInfo(false))
     }
 
@@ -614,6 +646,7 @@ class GhostRepository @Inject constructor(
      * Stop GPS info
      */
     suspend fun stopGpsInfo() {
+        _isGpsTracking.value = false
         sendCommand(GhostCommand.GpsInfo(true))
     }
 
@@ -621,6 +654,8 @@ class GhostRepository @Inject constructor(
      * Start wardriving
      */
     suspend fun startWardrive() {
+        _isWardriving.value = true
+        _wardriveStats.value = null
         sendCommand(GhostCommand.StartWardrive(false))
     }
 
@@ -628,7 +663,25 @@ class GhostRepository @Inject constructor(
      * Stop wardriving
      */
     suspend fun stopWardrive() {
+        _isWardriving.value = false
         sendCommand(GhostCommand.StartWardrive(true))
+    }
+
+    /**
+     * Start BLE wardriving
+     */
+    suspend fun startBleWardrive() {
+        _isBleWardriving.value = true
+        _wardriveStats.value = null
+        sendCommand(GhostCommand.BleWardrive(false))
+    }
+
+    /**
+     * Stop BLE wardriving
+     */
+    suspend fun stopBleWardrive() {
+        _isBleWardriving.value = false
+        sendCommand(GhostCommand.BleWardrive(true))
     }
 
     // ==================== SD Card Commands ====================
@@ -1335,6 +1388,19 @@ class GhostRepository @Inject constructor(
                     }
                 }
             }
+            GhostSerialResponse.ResponseType.GPS_POSITION -> {
+                GhostResponse.GpsPosition.parse(response.raw)?.let { position ->
+                    _gpsPosition.value = position
+                    if (position.fix) {
+                        _statusMessage.value = "GPS Fix: ${position.fixType} (${position.satellites} sats)"
+                    }
+                }
+            }
+            GhostSerialResponse.ResponseType.WARDDRIVE_STATS -> {
+                GhostResponse.WardriveStats.parse(response.raw)?.let { stats ->
+                    _wardriveStats.value = stats
+                }
+            }
             else -> {
                 // Check for status messages
                 if (!response.raw.startsWith(">") && !response.raw.startsWith("$")) {
@@ -1400,6 +1466,17 @@ class GhostRepository @Inject constructor(
         _settings.value = emptyMap()
     }
     
+    fun clearGpsData() {
+        _gpsPosition.value = null
+        _isGpsTracking.value = false
+    }
+    
+    fun clearWardriveData() {
+        _wardriveStats.value = null
+        _isWardriving.value = false
+        _isBleWardriving.value = false
+    }
+    
     /**
      * Clear all cached data - call on disconnect
      */
@@ -1433,6 +1510,10 @@ class GhostRepository @Inject constructor(
         _trackData.value = null
         _trackHeader.value = null
         _flipperTrackData.value = null
+        
+        // Clear GPS and wardriving data
+        clearGpsData()
+        clearWardriveData()
         
         // Clear PCAP file
         clearPcapFile()

@@ -14,8 +14,9 @@
         <item name="android:statusBarColor">#FAFAFA</item>
         <item name="android:windowLightStatusBar">true</item>
         
-        <!-- Navigation bar - Light background (dark icons only on API 27+) -->
+        <!-- Navigation bar - Light background with dark icons -->
         <item name="android:navigationBarColor">#FAFAFA</item>
+        <item name="android:windowLightNavigationBar">true</item>
         
         <!-- Window background - Off-white -->
         <item name="android:windowBackground">#FAFAFA</item>

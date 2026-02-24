@@ -2,21 +2,31 @@
 <resources>
     <!-- Common USB-Serial chips used in ESP32 dev boards -->
     
-    <!-- FTDI FT232, FT2232, FT4232 -->
+    <!-- FTDI FT232, FT2232, FT4232 (vendor: 0x0403) -->
     <usb-device vendor-id="1027" />
     
-    <!-- Prolific PL2303 -->
+    <!-- Prolific PL2303 (vendor: 0x067B) -->
     <usb-device vendor-id="1659" />
     
-    <!-- Silicon Labs CP210x -->
+    <!-- Silicon Labs CP210x (vendor: 0x10C4) -->
     <usb-device vendor-id="4292" />
     
-    <!-- CH340/CH341 -->
+    <!-- WCH CH340/CH341 (vendor: 0x1A86) -->
+    <!-- CH340: product-id 0x7523 (29939) -->
+    <!-- CH341: product-id 0x5523 (21795) -->
     <usb-device vendor-id="6790" />
+    <usb-device vendor-id="6790" product-id="29939" />
+    <usb-device vendor-id="6790" product-id="21795" />
+    
+    <!-- WCH CH9102 (vendor: 0x1A86, product: 0x55D4) -->
+    <usb-device vendor-id="6790" product-id="21972" />
+    
+    <!-- QinHeng Electronics CH340/CH341 (alternate vendor: 0x4348) -->
+    <usb-device vendor-id="17224" />
     
     <!-- CDC-ACM devices (includes some ESP32-S2/S3 in USB-CDC mode) -->
     <usb-device class="2" />
     
-    <!-- Espressif devices -->
+    <!-- Espressif devices in download mode -->
     <usb-device vendor-id="4292" product-id="60000" />
 </resources>
