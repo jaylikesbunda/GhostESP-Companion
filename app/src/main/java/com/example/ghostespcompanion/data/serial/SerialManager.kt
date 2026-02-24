@@ -425,13 +425,6 @@ class SerialManager @Inject constructor(
             binaryHeaderBuffer.reset()
             isCollectingBinaryHeader = false
 
-        // Reset binary mode state
-        isBinaryMode = false
-        binaryAccumulator.reset()
-        terminatorMatchPos = 0
-        binaryHeaderBuffer.reset()
-        isCollectingBinaryHeader = false
-
             isConnectedFlag.set(true)
             isConnecting.set(false)
             startReading()
