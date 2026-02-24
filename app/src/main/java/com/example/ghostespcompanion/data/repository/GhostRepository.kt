@@ -809,6 +809,11 @@ class GhostRepository @Inject constructor(
         }
     }
 
+    suspend fun checkSdCard() {
+        clearSdEntries()
+        sendCommand(GhostCommand.SdList("/mnt/ghostesp"))
+    }
+
     /**
      * Send a command and wait for a binary chunk from SerialManager.
      * SerialManager automatically switches to binary mode when it sees SD:READ:LENGTH:
@@ -1157,7 +1162,12 @@ class GhostRepository @Inject constructor(
 
     // ==================== Response Parsing ====================
 
+    private var parseResponseCount = 0
+    private var parseResponseSlowCount = 0
+
     private fun parseResponse(response: GhostSerialResponse) {
+        val startNanos = System.nanoTime()
+        
         when (response.type) {
             GhostSerialResponse.ResponseType.ACCESS_POINT -> {
                 GhostResponse.AccessPoint.parse(response.raw)?.let { ap ->
@@ -1412,6 +1422,14 @@ class GhostRepository @Inject constructor(
                 if (!response.raw.startsWith(">") && !response.raw.startsWith("$")) {
                     _statusMessage.value = response.raw
                 }
+            }
+        }
+        
+        val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000
+        if (elapsedMs >= 5) {
+            parseResponseSlowCount++
+            if (parseResponseSlowCount % 50 == 1) {
+                Log.w("GhostRepo.PERF", "parseResponse slow: ${elapsedMs}ms type=${response.type} count=$parseResponseSlowCount")
             }
         }
     }

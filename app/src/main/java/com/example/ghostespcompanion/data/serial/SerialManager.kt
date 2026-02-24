@@ -107,6 +107,18 @@ class SerialManager @Inject constructor(
         _chipInfoDebugLog.value = (_chipInfoDebugLog.value + "[$ts] $msg").takeLast(20)
     }
 
+    private var lastPerfLogTime = 0L
+    private var bytesProcessedTotal = 0L
+    private var linesProcessedTotal = 0L
+    private var perfLogCount = 0
+
+    private fun perfLog(tag: String, durationNanos: Long, detail: String = "") {
+        val elapsedMs = durationNanos / 1_000_000
+        if (elapsedMs >= 10) {
+            android.util.Log.w("SerialManager.PERF", "$tag: ${elapsedMs}ms $detail")
+        }
+    }
+
     // Binary data chunks for file transfers
     // Firmware sends raw binary after SD:READ:LENGTH: line, terminated by \nSD:READ:END:
     // Using Channel instead of SharedFlow to avoid race conditions - the collector
@@ -120,6 +132,10 @@ class SerialManager @Inject constructor(
     private var consumerJob: Job? = null
     private var flushJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    
+    private var readLoopCount = 0L
+    private var readLoopBytes = 0L
+    private var readLoopStartTime = 0L
     private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Track if we're in the process of connecting (to prevent double-connects)
@@ -652,6 +668,7 @@ class SerialManager @Inject constructor(
      * This runs on IO dispatcher and sends data to Channel (never blocks)
      */
     private fun startReading() {
+        readLoopStartTime = System.currentTimeMillis()
         readJob = scope.launch {
             var consecutiveErrors = 0
             while (isActive && isConnectedFlag.get()) {
@@ -660,7 +677,16 @@ class SerialManager @Inject constructor(
                         val bytesRead = port.read(readBuffer, 1000)
                         if (bytesRead > 0) {
                             consecutiveErrors = 0
+                            readLoopCount++
+                            readLoopBytes += bytesRead
                             processIncomingDataFast(readBuffer, bytesRead)
+                            
+                            // Log throughput every ~500 reads
+                            if (readLoopCount % 500 == 0L) {
+                                val elapsed = System.currentTimeMillis() - readLoopStartTime
+                                val rate = if (elapsed > 0) (readLoopBytes * 1000 / elapsed) else 0
+                                android.util.Log.i("SerialManager.PERF", "Throughput: ${readLoopCount} reads, ${readLoopBytes} bytes, ${rate} bytes/sec")
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -686,11 +712,19 @@ class SerialManager @Inject constructor(
      * Start the channel consumer that processes grouped lines and emits to response flow
      * This runs on IO dispatcher separate from the read loop
      */
+    private var consumerLoopCount = 0L
+    
     private fun startConsumer() {
         consumerJob = scope.launch {
             for (line in responseChannel) {
+                val startNanos = System.nanoTime()
                 val response = GhostSerialResponse(line)
                 _responses.tryEmit(response)
+                consumerLoopCount++
+                val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000
+                if (elapsedMs >= 3 && consumerLoopCount % 100 == 1L) {
+                    android.util.Log.w("SerialManager.PERF", "consumer slow: ${elapsedMs}ms")
+                }
             }
         }
     }
@@ -799,8 +833,11 @@ class SerialManager @Inject constructor(
      * Binary mode: When SD:READ:LENGTH: is detected, switches to raw byte collection.
      */
     private fun processIncomingDataFast(buffer: ByteArray, length: Int) {
+        val startNanos = System.nanoTime()
+        
         if (isBinaryMode) {
             processBinaryData(buffer, length)
+            perfLog("processIncomingDataFast_binary", System.nanoTime() - startNanos)
             return
         }
 
@@ -837,6 +874,7 @@ class SerialManager @Inject constructor(
                 }
             }
         }
+        perfLog("processIncomingDataFast", System.nanoTime() - startNanos, "bytes=$length")
     }
 
     /**
@@ -896,6 +934,8 @@ class SerialManager @Inject constructor(
      * 3. Feed into multi-line state machine for parsed responses only
      */
     private fun processLine(line: String) {
+        val startNanos = System.nanoTime()
+        
         // Strip ANSI escape codes efficiently
         var cleanLine = stripAnsiFast(line)
 
@@ -1084,6 +1124,7 @@ class SerialManager @Inject constructor(
                 }
             }
         }
+        perfLog("processLine", System.nanoTime() - startNanos)
     }
 
     /**

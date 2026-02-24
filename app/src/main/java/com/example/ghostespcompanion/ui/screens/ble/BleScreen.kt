@@ -122,7 +122,8 @@ fun BleScreen(
             IconButton(onClick = onNavigateToFlipper) {
                 Icon(
                     painter = painterResource(R.drawable.ic_dolphin),
-                    contentDescription = "Flipper Detect"
+                    contentDescription = "Flipper Detect",
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
@@ -709,7 +710,7 @@ private fun BleDeviceCard(
                         painter = painterResource(R.drawable.ic_dolphin),
                         contentDescription = null,
                         tint = primaryColor(),
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 } else {
                     Icon(

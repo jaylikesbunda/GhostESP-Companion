@@ -56,12 +56,16 @@ class MainViewModel @Inject constructor(
         private const val MAX_TERMINAL_LINES = 1000
     }
 
+    private var terminalBuildCount = 0
+    private var terminalSlowCount = 0
+
     init {
         // Collect raw output and store in terminal buffer
         // This ensures no data is lost when terminal screen is not visible
         // Build the new list on Default dispatcher to avoid main thread list copies
         viewModelScope.launch(Dispatchers.Default) {
             ghostRepository.rawOutput.collect { line ->
+                val startNanos = System.nanoTime()
                 _terminalLines.value = buildList {
                     val currentLines = _terminalLines.value
                     // If at capacity, drop oldest line(s) to make room
@@ -76,6 +80,14 @@ class MainViewModel @Inject constructor(
                     }
                     // Add new line
                     add(line)
+                }
+                terminalBuildCount++
+                val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000
+                if (elapsedMs >= 5) {
+                    terminalSlowCount++
+                    if (terminalSlowCount % 20 == 1) {
+                        android.util.Log.w("MainViewModel.PERF", "terminal build slow: ${elapsedMs}ms lines=${_terminalLines.value.size}")
+                    }
                 }
             }
         }
@@ -536,6 +548,12 @@ class MainViewModel @Inject constructor(
     fun downloadSdFile(context: Context, filePath: String, fileName: String) {
         viewModelScope.launch(Dispatchers.IO) {
             ghostRepository.downloadSdFile(context, filePath, fileName)
+        }
+    }
+
+    fun checkSdCard() {
+        viewModelScope.launch(Dispatchers.IO) {
+            ghostRepository.checkSdCard()
         }
     }
 

@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -45,6 +46,8 @@ fun GpsScreen(
 ) {
     var showMap by remember { mutableStateOf(true) }
     var showOverlay by remember { mutableStateOf(true) }
+    var showSdCardWarning by remember { mutableStateOf(false) }
+    var sdCardCheckDone by remember { mutableStateOf(false) }
     val context = LocalContext.current
     
     var phoneLocation by remember { mutableStateOf<PhoneLocation?>(null) }
@@ -83,6 +86,21 @@ fun GpsScreen(
     val deviceInfo by viewModel.deviceInfo.collectAsState()
     val isConnected = connectionState == SerialManager.ConnectionState.CONNECTED
     
+    val sdEntries by viewModel.sdEntries.collectAsState()
+    
+    LaunchedEffect(isConnected, sdCardCheckDone) {
+        if (isConnected && !sdCardCheckDone) {
+            sdCardCheckDone = true
+            viewModel.checkSdCard()
+        }
+    }
+    
+    LaunchedEffect(statusMessage, sdCardCheckDone) {
+        if (sdCardCheckDone && statusMessage?.contains("SD Error") == true) {
+            showSdCardWarning = true
+        }
+    }
+    
     val gpsPosition by viewModel.gpsPosition.collectAsState()
     val wardriveStats by viewModel.wardriveStats.collectAsState()
     val isWardriving by viewModel.isWardriving.collectAsState()
@@ -114,9 +132,6 @@ fun GpsScreen(
 
         withContext(Dispatchers.Main) {
             try {
-                // Resume tile loading when map becomes visible again
-                mapView.onResume()
-
                 mapView.overlays.clear()
 
                 // Create tinted marker icons
@@ -178,69 +193,89 @@ fun GpsScreen(
             }
         }
     ) { paddingValues ->
-        if (showMap) {
-            Box(
+        // Single Box with the map view always in the composition tree.
+        // Removing AndroidView from composition triggers MapView.onDetachedFromWindow()
+        // which calls mTileProvider.detach(), killing tile loading. Keeping it permanently
+        // present and overlaying the list view on top avoids this entirely.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            // Map view — always present, never detached from the window.
+            AndroidView(
+                factory = { mapView },
+                update = { mv ->
+                    mv.onResume()
+                    mv.invalidate()
+                },
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues)
-            ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    AndroidView(
-                        factory = { mapView },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(if (privacyMode) Modifier.blur(25.dp) else Modifier)
-                    )
-                    
-                    if (privacyMode) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(SurfaceDark.copy(alpha = 0.4f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Lock,
-                                    contentDescription = "Privacy Mode",
-                                    tint = SurfaceDark,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Text(
-                                    text = "Privacy Mode",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = SurfaceDark,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Map hidden to protect location",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = SurfaceDark.copy(alpha = 0.7f)
-                                )
-                            }
-                        }
+                    .then(if (showMap && privacyMode) Modifier.blur(25.dp) else Modifier)
+            )
+
+            // Privacy overlay (map mode only)
+            if (showMap && privacyMode) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.5f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Lock,
+                            contentDescription = "Privacy Mode",
+                            tint = Color.White,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Text(
+                            text = "Privacy Mode",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Map hidden to protect location",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
                     }
                 }
+            }
 
-                if (hasDeviceInfo && !isGpsSupported) {
-                    FeatureNotSupportedOverlay(
-                        show = showOverlay,
-                        onProceed = { showOverlay = false },
-                        featureName = "GPS",
-                        message = "This device does not have GPS hardware support. Wardriving requires a GPS module."
-                    )
-                }
+            // Feature-not-supported overlay (shown in both modes)
+            if (hasDeviceInfo && !isGpsSupported) {
+                FeatureNotSupportedOverlay(
+                    show = showOverlay,
+                    onProceed = { showOverlay = false },
+                    featureName = "GPS",
+                    message = "This device does not have GPS hardware support. Wardriving requires a GPS module."
+                )
+            }
 
+            // SD card required warning overlay
+            if (showSdCardWarning) {
+                FeatureNotSupportedOverlay(
+                    show = true,
+                    onProceed = { showSdCardWarning = false },
+                    featureName = "SD Card Required",
+                    message = "Wardriving requires an SD card in the GhostESP device. CSV files are saved to ghostesp/gps on the device SD card."
+                )
+            }
+
+            if (showMap) {
+                // Bottom stats/controls card (map mode)
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.BottomCenter)
                         .padding(horizontal = 16.dp, vertical = 16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = SurfaceDark.copy(alpha = 0.95f)
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
                     ),
                     shape = RoundedCornerShape(16.dp)
                 ) {
@@ -334,12 +369,12 @@ fun GpsScreen(
                                     text = if (privacyMode) "**.**°" else if (phoneLocation != null) String.format("%.5f°", phoneLocation!!.latitude) else "--",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (phoneLocation != null) Success else OnSurfaceVariantDark
+                                    color = if (phoneLocation != null) Success else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = "Lat",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = OnSurfaceVariantDark
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -347,12 +382,12 @@ fun GpsScreen(
                                     text = if (privacyMode) "**.**°" else if (phoneLocation != null) String.format("%.5f°", phoneLocation!!.longitude) else "--",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (phoneLocation != null) Success else OnSurfaceVariantDark
+                                    color = if (phoneLocation != null) Success else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = "Lon",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = OnSurfaceVariantDark
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -360,12 +395,12 @@ fun GpsScreen(
                                     text = "${wardriveStats?.gpsSatellites ?: gpsPosition?.satellites ?: 0}",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if ((wardriveStats?.gpsSatellites ?: 0) > 0 || gpsPosition?.fix == true) primaryColor() else OnSurfaceVariantDark
+                                    color = if ((wardriveStats?.gpsSatellites ?: 0) > 0 || gpsPosition?.fix == true) primaryColor() else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = "Sats",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = OnSurfaceVariantDark
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -373,12 +408,12 @@ fun GpsScreen(
                                     text = "${gpsPosition?.altitude?.toInt() ?: 0}m",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (gpsPosition?.fix == true) primaryColor() else OnSurfaceVariantDark
+                                    color = if (gpsPosition?.fix == true) primaryColor() else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = "Alt",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = OnSurfaceVariantDark
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -386,12 +421,12 @@ fun GpsScreen(
                                     text = if (isBleWardriving) "${wardriveStats?.bleDevices ?: 0}" else "${wardriveStats?.accessPoints ?: 0}",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isWardriving || isBleWardriving) successColor() else OnSurfaceVariantDark
+                                    color = if (isWardriving || isBleWardriving) successColor() else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = if (isBleWardriving) "BLE" else "APs",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = OnSurfaceVariantDark
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -406,25 +441,12 @@ fun GpsScreen(
                         }
                     }
                 }
-
-            }
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-            ) {
-                if (hasDeviceInfo && !isGpsSupported) {
-                    FeatureNotSupportedOverlay(
-                        show = showOverlay,
-                        onProceed = { showOverlay = false },
-                        featureName = "GPS",
-                        message = "This device does not have GPS hardware support. Wardriving requires a GPS module."
-                    )
-                }
-
+            } else {
+                // List view — opaque overlay on top of the (always-present) map view.
                 Column(
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
                 ) {
                     GpsConnectionBanner(
                         isConnected = isConnected,
@@ -503,7 +525,7 @@ fun GpsScreen(
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = CardDefaults.cardColors(
-                                        containerColor = SurfaceVariantDark
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
                                     ),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
@@ -541,7 +563,7 @@ fun GpsScreen(
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = CardDefaults.cardColors(
-                                        containerColor = SurfaceVariantDark
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
                                     ),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
@@ -549,7 +571,7 @@ fun GpsScreen(
                                         text = statusMessage!!,
                                         modifier = Modifier.padding(16.dp),
                                         style = MaterialTheme.typography.bodyMedium,
-                                        color = OnSurfaceDark
+                                        color = MaterialTheme.colorScheme.onSurface
                                     )
                                 }
                             }
@@ -559,7 +581,7 @@ fun GpsScreen(
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = SurfaceVariantDark.copy(alpha = 0.5f)
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                 ),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
@@ -570,21 +592,20 @@ fun GpsScreen(
                                     Icon(
                                         Icons.Default.Info,
                                         contentDescription = null,
-                                        tint = OnSurfaceVariantDark,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
-                                        text = "Wardriving records WiFi networks with GPS coordinates to CSV on the SD card. Use 'gpsinfo' for real-time GPS data.",
+                                        text = "CSVs are saved to the device SD card under ghostesp/gps.",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = OnSurfaceVariantDark
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
                         }
                     }
                 }
-
             }
         }
     }
@@ -596,13 +617,13 @@ private fun CoordinateDisplay(label: String, value: Double, unit: String, privac
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = OnSurfaceVariantDark
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
             text = if (privacyMode) "**.****$unit" else String.format("%.6f$unit", value),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
-            color = OnSurfaceDark
+            color = MaterialTheme.colorScheme.onSurface
         )
     }
 }
@@ -621,7 +642,7 @@ private fun GpsStatItem(label: String, value: String) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = OnSurfaceVariantDark
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -640,7 +661,7 @@ private fun StatColumn(label: String, value: String) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = OnSurfaceVariantDark
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -685,7 +706,7 @@ private fun GpsConnectionBanner(
                         Text(
                             text = "GPS ready",
                             style = MaterialTheme.typography.labelSmall,
-                            color = OnSurfaceVariantDark
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
