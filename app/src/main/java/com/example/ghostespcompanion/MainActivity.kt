@@ -82,13 +82,12 @@ fun GhostESPApp(
     val connectionState by viewModel.connectionState.collectAsState()
     val hasAutoConnected = remember { mutableStateOf(false) }
     var showDeviceDialog by remember { mutableStateOf(false) }
-    var availableDevices by remember { mutableStateOf<List<UsbDevice>>(emptyList()) }
-    
+    val availableDevices by viewModel.availableUsbDevices.collectAsState()
+
     LaunchedEffect(autoConnect, connectionState) {
         if (autoConnect && !hasAutoConnected.value && connectionState == SerialManager.ConnectionState.DISCONNECTED) {
             hasAutoConnected.value = true
-            val devices = viewModel.getAvailableDevices()
-            availableDevices = devices
+            val devices = viewModel.fetchAvailableDevices()
             when (devices.size) {
                 0 -> { /* no devices, nothing to show */ }
                 1 -> viewModel.connectWithAutoBaud(devices.first())
@@ -181,7 +180,7 @@ fun GhostESPApp(
                     viewModel.connectWithBaud(device, baud)
                 },
                 onRefresh = {
-                    availableDevices = viewModel.getAvailableDevices()
+                    viewModel.refreshAvailableDevices()
                 },
                 onDismiss = {
                     showDeviceDialog = false

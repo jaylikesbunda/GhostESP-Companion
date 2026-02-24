@@ -17,6 +17,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
@@ -208,10 +209,32 @@ class MainViewModel @Inject constructor(
 
     // ==================== Connection ====================
 
-    fun getAvailableDevices(): List<UsbDevice> = ghostRepository.getAvailableDevices()
-    
-    fun getAllUsbDevices(): List<UsbDevice> = ghostRepository.getAllUsbDevices()
-    
+    // USB device lists — updated on IO dispatcher to keep main thread free
+    private val _availableUsbDevices = MutableStateFlow<List<UsbDevice>>(emptyList())
+    val availableUsbDevices: StateFlow<List<UsbDevice>> = _availableUsbDevices.asStateFlow()
+
+    private val _allUsbDevices = MutableStateFlow<List<UsbDevice>>(emptyList())
+    val allUsbDevices: StateFlow<List<UsbDevice>> = _allUsbDevices.asStateFlow()
+
+    fun refreshAvailableDevices() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _availableUsbDevices.value = ghostRepository.getAvailableDevices()
+        }
+    }
+
+    /** Suspend version — for callers (e.g. LaunchedEffect) that need the result inline. */
+    suspend fun fetchAvailableDevices(): List<UsbDevice> = withContext(Dispatchers.IO) {
+        val devices = ghostRepository.getAvailableDevices()
+        _availableUsbDevices.value = devices
+        devices
+    }
+
+    fun refreshAllUsbDevices() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _allUsbDevices.value = ghostRepository.getAllUsbDevices()
+        }
+    }
+
     fun logUsbDebug() = ghostRepository.logUsbDebug()
 
     fun connect(device: UsbDevice) {

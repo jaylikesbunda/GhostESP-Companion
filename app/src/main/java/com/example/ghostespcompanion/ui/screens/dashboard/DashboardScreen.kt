@@ -80,8 +80,8 @@ val connectionState by viewModel.connectionState.collectAsState()
     val privacyMode = appSettings.privacyMode
     
     var showDeviceDialog by remember { mutableStateOf(false) }
-    var availableDevices by remember { mutableStateOf<List<UsbDevice>>(emptyList()) }
-    val allUsbDevices by remember { mutableStateOf(viewModel.getAllUsbDevices()) }
+    val availableDevices by viewModel.availableUsbDevices.collectAsState()
+    val allUsbDevices by viewModel.allUsbDevices.collectAsState()
     val usbDebugLog by viewModel.usbDebugLog.collectAsState()
     
     MainScreen(title = "Dashboard") { paddingValues ->
@@ -104,7 +104,8 @@ val connectionState by viewModel.connectionState.collectAsState()
                             if (connectionState == SerialManager.ConnectionState.ERROR) {
                                 viewModel.forceDisconnect()
                             }
-                            availableDevices = viewModel.getAvailableDevices()
+                            viewModel.refreshAvailableDevices()
+                            viewModel.refreshAllUsbDevices()
                             showDeviceDialog = true
                         },
                         onDisconnectClick = { viewModel.disconnect() },
@@ -233,7 +234,7 @@ val connectionState by viewModel.connectionState.collectAsState()
                         viewModel.connect(device)
                     },
                     onDebugClick = {
-                        availableDevices = viewModel.getAvailableDevices()
+                        viewModel.refreshAvailableDevices()
                     },
                     onDismiss = { showDeviceDialog = false }
                 )

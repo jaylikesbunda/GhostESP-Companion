@@ -1,0 +1,44 @@
+# Baseline profile for GhostESP Companion
+# Tells ProfileInstaller (already wired up) to AOT-compile these hot paths
+# so the JIT doesn't have to do it during the first frame render.
+#
+# Format: [HSP]L<class>;-><method>(<args>)<return>
+#   H = Hot (called frequently)
+#   S = Startup (called during app startup)
+#   P = Post-startup (called shortly after)
+
+# ── Compose runtime ──────────────────────────────────────────────────────────
+HSPLandroidx/compose/runtime/RecomposerKt;->**
+HSPLandroidx/compose/runtime/Recomposer;->**
+HSPLandroidx/compose/runtime/CompositionKt;->**
+HSPLandroidx/compose/runtime/Composition;->**
+HSPLandroidx/compose/runtime/CompositionImpl;->**
+HSPLandroidx/compose/runtime/SlotTable;->**
+HSPLandroidx/compose/runtime/SlotWriter;->**
+HSPLandroidx/compose/runtime/SlotReader;->**
+
+# ── SnapshotStateList (shows lock-verification warnings on this device) ───────
+HSPLandroidx/compose/runtime/snapshots/SnapshotStateList;->**
+HSPLandroidx/compose/runtime/snapshots/SnapshotStateObserver;->**
+HSPLandroidx/compose/runtime/snapshots/SnapshotKt;->**
+
+# ── Compose UI — measure/layout/draw pass ────────────────────────────────────
+HSPLandroidx/compose/ui/node/LayoutNodeKt;->**
+HSPLandroidx/compose/ui/node/LayoutNode;->**
+HSPLandroidx/compose/ui/node/MeasureAndLayoutDelegate;->**
+HSPLandroidx/compose/ui/node/NodeChain;->**
+
+# ── Compose UI — AndroidComposeView (bridges to ViewRootImpl) ────────────────
+HSPLandroidx/compose/ui/platform/AndroidComposeView;->**
+HSPLandroidx/compose/ui/platform/AndroidComposeViewKt;->**
+
+# ── Material3 hot paths ──────────────────────────────────────────────────────
+HSPLandroidx/compose/material3/ScaffoldKt;->**
+HSPLandroidx/compose/material3/NavigationBarKt;->**
+HSPLandroidx/compose/material3/CardKt;->**
+HSPLandroidx/compose/material3/ButtonKt;->**
+HSPLandroidx/compose/material3/TextKt;->**
+
+# ── Coroutines (StateFlow collection on main thread) ─────────────────────────
+HSPLkotlinx/coroutines/flow/StateFlowKt;->**
+HSPLkotlinx/coroutines/flow/internal/ChannelFlowKt;->**

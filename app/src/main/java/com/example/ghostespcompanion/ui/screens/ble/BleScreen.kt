@@ -54,7 +54,7 @@ fun BleScreen(
     var showScanModeMenu by remember { mutableStateOf(false) }
     var showSpamModeMenu by remember { mutableStateOf(false) }
     var showDeviceDialog by remember { mutableStateOf(false) }
-    var availableDevices by remember { mutableStateOf<List<UsbDevice>>(emptyList()) }
+    val availableDevices by viewModel.availableUsbDevices.collectAsState()
     var showGattDetailSheet by remember { mutableStateOf(false) }
     var selectedGattDevice by remember { mutableStateOf<GhostResponse.GattDevice?>(null) }
     var showFlipperDetailSheet by remember { mutableStateOf(false) }
@@ -138,8 +138,7 @@ fun BleScreen(
                 isConnected = isConnected,
                 connectionState = connectionState,
                 onConnect = {
-                    availableDevices = viewModel.getAvailableDevices()
-                    // Always show dialog to allow device selection
+                    viewModel.refreshAvailableDevices()
                     showDeviceDialog = true
                 }
             )

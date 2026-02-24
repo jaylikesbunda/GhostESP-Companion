@@ -59,7 +59,7 @@ fun WifiScreen(
     var selectedAp by remember { mutableStateOf<AccessPointPreview?>(null) }
     var showDeviceInfoDialog by remember { mutableStateOf(false) }
     var showDeviceDialog by remember { mutableStateOf(false) }
-    var availableDevices by remember { mutableStateOf<List<UsbDevice>>(emptyList()) }
+    val availableDevices by viewModel.availableUsbDevices.collectAsState()
     
     // Attack states
     var activeDeauthIndex by remember { mutableStateOf<Int?>(null) }
@@ -158,18 +158,15 @@ fun WifiScreen(
                     if (connectionState == SerialManager.ConnectionState.ERROR) {
                         viewModel.forceDisconnect()
                     }
-                    val devices = viewModel.getAvailableDevices()
-                    availableDevices = devices
-                    when (devices.size) {
-                        0 -> { /* no devices detected, nothing to show */ }
-                        else -> showDeviceDialog = true
-                    }
+                    viewModel.refreshAvailableDevices()
+                    viewModel.refreshAllUsbDevices()
+                    showDeviceDialog = true
                 }
             )
             
             // Device Selection Dialog
             if (showDeviceDialog) {
-                val allUsbDevices = remember { viewModel.getAllUsbDevices() }
+                val allUsbDevices by viewModel.allUsbDevices.collectAsState()
                 val usbDebugLog by viewModel.usbDebugLog.collectAsState()
                 DeviceSelectionDialog(
                     devices = availableDevices,
@@ -180,7 +177,7 @@ fun WifiScreen(
                         viewModel.connectWithBaud(device, baud)
                     },
                     onDebugClick = {
-                        availableDevices = viewModel.getAvailableDevices()
+                        viewModel.refreshAvailableDevices()
                     },
                     onDismiss = { showDeviceDialog = false }
                 )

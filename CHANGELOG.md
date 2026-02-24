@@ -6,5 +6,7 @@
 - Added support for more serial USB devices
 - Added GPS/Wardriving support
 - Stop any previous command when running a new one
+- Performance improvements
+- Minor UI tweaks
 
 ## v0.1.0 - Initial release
